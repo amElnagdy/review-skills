@@ -32,7 +32,7 @@ test('threads.sh github: whole script against a fake gh', () => {
   assert.equal(out.threads.length, 3);
   for (const k of KEYS) assert.ok(k in out.threads[0], `missing ${k}`);
   const [t1, t2, t3] = out.threads;
-  assert.deepEqual([t1.debate_review, t1.debate_id, t1.debate_status, t1.debate_severity], [true, 'F1', 'agreed', 'blocking']);
+  assert.deepEqual([t1.debate_review, t1.debate_id, t1.debate_status, t1.debate_severity, t1.debate_level], [true, 'F1', 'agreed', 'blocking', 'P1']);
   assert.equal(t1.author_is_pr_author, true);        // posted from the user's account, still a reviewer thread
   assert.deepEqual([t2.author_bot, t2.outdated, t2.line, t2.resolved], [true, true, 40, true]);
   assert.deepEqual([t3.debate_review, t3.author_bot, t3.line_side], [false, false, 'LEFT']);
@@ -52,8 +52,8 @@ test('threads.sh gitlab: same shape, individual notes and system notes excluded,
   for (const k of KEYS) assert.ok(k in out.threads[0], `missing ${k}`);
   assert.deepEqual(out.threads.map(t => t.thread_id), ['d1', 'd4']);   // d2 individual note, d3 system note
   const [d1, d4] = out.threads;
-  assert.deepEqual([d1.debate_status, d1.path, d1.line, d1.line_side, d1.position_head, d1.comment_count, d1.last_author],
-    ['contested', 'lib/x.rb', 7, 'new', 'bbbb2222', 2, 'bob']);
+  assert.deepEqual([d1.debate_status, d1.debate_level, d1.path, d1.line, d1.line_side, d1.position_head, d1.comment_count, d1.last_author],
+    ['contested', null, 'lib/x.rb', 7, 'new', 'bbbb2222', 2, 'bob']);   // old-format marker (no level) still parses
   assert.equal(d1.outdated, null);
   assert.deepEqual([d4.author_bot, d4.resolved, d4.path, d4.note_type], [true, true, null, 'DiscussionNote']);
   assert.equal(out.unresolved, 1);

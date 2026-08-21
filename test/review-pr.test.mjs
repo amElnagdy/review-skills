@@ -67,3 +67,19 @@ test('validate: contract checks fail closed and fill missing verdicts', async ()
   assert.throws(() => validateFinal({ schema: 'debate-review.final.v1', findings: [ok[0], ok[1], f('D1', { status: 'contested' })] }, findings, debate), /cannot be contested/);
 });
 
+
+test('render: levels, alerts, marker first, body counts', async () => {
+  const { levelOf, renderInline, renderBody } = await import('../skills/debate-review/scripts/lib/render.mjs');
+  const base = { file: 'a.py', line_start: 1, line_end: 2, claim: 'boom', evidence: 'e', recommendation: 'r', debate_note: 'n' };
+  const p0 = { ...base, id: 'F1', status: 'agreed', severity: 'blocking', axis: 'security' };
+  const p1 = { ...base, id: 'F2', status: 'contested', severity: 'blocking', axis: 'correctness' };
+  const p2 = { ...base, id: 'D1', status: 'agreed', severity: 'non-blocking', axis: 'tests' };
+  assert.deepEqual([levelOf(p0), levelOf(p1), levelOf(p2)], ['P0', 'P1', 'P2']);
+  const c = renderInline(p1);
+  assert.ok(c.startsWith('<!-- debate-review:F2 status=contested severity=blocking level=P1 -->\n> [!WARNING]\n> **P1, contested.'));
+  assert.ok(renderInline(p0).includes('> [!CAUTION]') && renderInline(p2).includes('> [!NOTE]'));
+  assert.ok(!/—/.test(c));
+  const body = renderBody({ who: { main: { implementer: 'claude' }, debate: { implementer: 'codex' } }, finalDoc: { head: 'abcdef1234', summary: 'Ship.' }, posted: [p0, p1, p2], unanchored: [] });
+  assert.ok(body.startsWith('<!-- debate-review head=abcdef1234 main=claude debate=codex agreed=2 contested=1 p0=1 p1=1 p2=1 -->'));
+  assert.ok(body.includes('| P0 | 1 |') && body.includes('| contested | 1 |') && body.includes('on `abcdef1`'));
+});

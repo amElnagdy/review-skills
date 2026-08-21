@@ -21,6 +21,7 @@ import { parseTarget, parseOrigin, projectPath, fetchPR, alreadyReviewed, fetchS
 import { diffLineMap, anchor } from './lib/diff.mjs';
 import { resolveRole, dispatch, extractJson } from './lib/dispatch.mjs';
 import { validateFindings, validateDebate, validateFinal } from './lib/validate.mjs';
+import { renderInline, renderBody } from './lib/render.mjs';
 
 const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -180,35 +181,6 @@ function findStandards(worktree) {
   return found.length ? found.join(', ') : 'none found, skip the Standards axis';
 }
 
-// ============================================================ rendering
-
-function renderInline(f) {
-  let body = `<!-- debate-review:${f.id} status=${f.status} severity=${f.severity} -->\n`;
-  body += `**${f.severity}, ${f.status}.** ${f.claim}\n\n`;
-  body += `${f.evidence || ''}\n\n`;
-  if (f.recommendation) body += `Suggested: ${f.recommendation}\n\n`;
-  if (f.debate_note) body += `_${f.debate_note}_\n`;
-  return body;
-}
-
-function renderBody(who, finalDoc, posted, unanchored) {
-  const agreed = posted.filter(f => f.status === 'agreed').length;
-  const contested = posted.filter(f => f.status === 'contested').length;
-
-  let body = `<!-- debate-review head=${finalDoc.head} main=${who.main.implementer} debate=${who.debate.implementer} agreed=${agreed} contested=${contested} -->\n`;
-  body += `**debate-review** main \`${who.main.implementer}\`, debate \`${who.debate.implementer}\`. ${agreed} agreed, ${contested} contested.\n\n`;
-  body += `${finalDoc.summary || ''}\n`;
-
-  if (unanchored.length > 0) {
-    body += `\n**Findings outside the diff** (could not be anchored inline):\n`;
-    for (const f of unanchored) {
-      body += `\n- **${f.severity}, ${f.status}.** \`${f.file}:${f.line_start}\` ${f.claim}`;
-    }
-    body += '\n';
-  }
-  return body;
-}
-
 // ============================================================ flow
 
 async function main() {
@@ -306,6 +278,8 @@ async function main() {
       runLog.stages.final = { seconds: finalRun.seconds, doc: finalDoc };
     }
     finalDoc.head = pr.head;
+    const axisOf = new Map([...findings.findings, ...debate.new_findings].map(f => [f.id, f.axis]));
+    for (const f of finalDoc.findings || []) if (!f.axis) f.axis = axisOf.get(f.id);
     save();
 
     // --- 4. choose what to post and anchor it to the diff
@@ -321,7 +295,7 @@ async function main() {
       if (a.snapped) body += `\n_(anchored to the nearest diff line; the finding named ${f.line_start}-${f.line_end})_\n`;
       comments.push({ ...a, body });
     }
-    const body = renderBody(who, finalDoc, toPost, unanchored);
+    const body = renderBody({ who, finalDoc, posted: toPost, unanchored });
 
     runLog.posted = {
       body,

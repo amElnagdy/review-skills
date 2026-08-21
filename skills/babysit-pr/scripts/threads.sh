@@ -30,7 +30,7 @@
 #       body           the thread's first comment, the finding itself
 #       last_author, last_body
 #       source         "thread" (GitHub) | "discussion" (GitLab)
-#       debate_review, debate_id, debate_status, debate_severity
+#       debate_review, debate_id, debate_status, debate_severity, debate_level (P0/P1/P2)
 #                      parsed from a debate-review marker in the first comment; debate-review posts
 #                      from the user's own account, so these threads are reviewer threads even though
 #                      the author is not a bot
@@ -78,11 +78,11 @@ fi
 # jq: parse the two debate-review markers. Shared by both forges.
 JQ_MARKERS='
   def thread_marker:
-    . + ((.body // "") | capture("<!-- debate-review:(?<debate_id>[FD][0-9]+) status=(?<debate_status>[a-z-]+) severity=(?<debate_severity>[a-z-]+) -->")
-          // {debate_id:null, debate_status:null, debate_severity:null})
+    . + ((.body // "") | capture("<!-- debate-review:(?<debate_id>[FD][0-9]+) status=(?<debate_status>[a-z-]+) severity=(?<debate_severity>[a-z-]+)(?: level=(?<debate_level>P[0-9]))?[^>]*-->")
+          // {debate_id:null, debate_status:null, debate_severity:null, debate_level:null})
     | . + {debate_review: (.debate_id != null)};
   def review_marker:
-    . + ((.body // "") | capture("<!-- debate-review head=(?<debate_head>[0-9a-f]+)(?: [^>]*?agreed=(?<debate_agreed>[0-9]+) contested=(?<debate_contested>[0-9]+))? -->")
+    . + ((.body // "") | capture("<!-- debate-review head=(?<debate_head>[0-9a-f]+)(?: [^>]*?agreed=(?<debate_agreed>[0-9]+) contested=(?<debate_contested>[0-9]+))?[^>]*-->")
           // {debate_head:null, debate_agreed:null, debate_contested:null})
     | .debate_agreed |= (if . == null then null else tonumber end)
     | .debate_contested |= (if . == null then null else tonumber end)
