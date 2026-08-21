@@ -41,15 +41,6 @@ test('extractJson + expectSchema', () => {
   assert.throws(() => expectSchema({ schema: 'wrong' }, 'debate-review.findings.v1', 'main'));
 });
 
-test('on-pr-created: ignores non-PR commands, does not start anything', () => {
-  const hook = path.join(ROOT, 'skills/debate-review/scripts/on-pr-created.mjs');
-  const r = spawnSync('node', [hook], { input: JSON.stringify({ tool_input: { command: 'git status' }, tool_response: 'clean' }), encoding: 'utf8' });
-  assert.equal(r.status, 0);
-  assert.equal(r.stdout, '');
-  const r2 = spawnSync('node', [hook], { input: 'not json', encoding: 'utf8' });
-  assert.equal(r2.status, 0);
-});
-
 test('review-pr: usage errors exit 2', () => {
   const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
   assert.equal(spawnSync('node', [script], { encoding: 'utf8' }).status, 2);

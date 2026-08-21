@@ -47,14 +47,6 @@ The review's comments carry `<!-- debate-review:<id> status=… -->` markers. `b
 those and handles them like any other bot round (verify, fix blockers, reply in-thread, resolve).
 Don't act on the findings yourself unless the user asks.
 
-## Auto-trigger on PR creation (optional)
-
-`hooks/claude-code.json` is a Claude Code `PostToolUse` hook: after any `gh pr create` /
-`glab mr create`, `scripts/on-pr-created.mjs` starts `review-pr.mjs` detached on the printed URL and
-returns at once. Logs go to `~/.cache/debate-review/hook-logs/`. Extra flags via
-`DEBATE_REVIEW_ARGS="--contested drop"`. Other orchestrators pipe the same JSON shape to the script
-or call `review-pr.mjs` directly from their own hook.
-
 ## Artifacts
 
 `~/.cache/debate-review/<owner>__<repo>/<N>/<head>/` — `run.json` (all three documents, timings,
