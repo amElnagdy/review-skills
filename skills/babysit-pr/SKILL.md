@@ -45,10 +45,11 @@ them. This is the single most common way a babysit loop goes wrong:
 - Top-level review bodies. This is where Greptile summarizes and Codex sometimes posts a numbered
   list. These are REST objects with no thread to resolve; answer them with one PR comment per round.
 
-The bundled script returns both in one call, already correlated:
+The bundled script returns both in one call, already correlated (`<skill-dir>` is the folder that
+holds this SKILL.md):
 
 ```bash
-~/.agents/skills/babysit-pr/scripts/threads.sh <N> > /tmp/pr-<N>-round-<k>.json
+"<skill-dir>/scripts/threads.sh" <N> > /tmp/pr-<N>-round-<k>.json
 ```
 
 Never trust a filtered count without its unfiltered twin. Before applying any jq filter to the
@@ -56,7 +57,7 @@ harvest, print the raw totals (`jq '{threads: (.threads|length), reviews: (.revi
 compare. A filter that eliminates 100% of items is presumed broken until the field names are
 verified against the actual schema (`jq '.threads[0] | keys'`). jq selects on a misspelled field
 fail silently-empty, and a "clean round" built on one is how a P1 gets a merge-gate mention posted
-over it (PR #133). GitHub tooling fails by returning less data, not by erroring; pair this with the
+over it. That has happened. GitHub tooling fails by returning less data, not by erroring; pair this with the
 pagination rule.
 
 Never describe an object you did not fetch. If a query for a specific id returns empty, that is a
@@ -154,14 +155,15 @@ gh api graphql -f query='mutation($t:ID!){
 
 Attribution. Open every reply by naming the model writing it and the person it writes for, so a
 reader never has to guess whether a human weighed in. Sign your own model name; this skill is
-model-neutral:
+model-neutral. The person is whoever owns the `gh` account the reply posts from. Get the name once
+per session with `gh api user -q '.name // .login'` and reuse it:
 
-> I am \<model-slug\> writing on behalf of Nagdy.
+> I am \<model-slug\> writing on behalf of \<user\>.
 
 Then the verdict, then the evidence, briefly:
 
 ```
-I am <model-slug> writing on behalf of Nagdy.
+I am <model-slug> writing on behalf of <user>.
 
 Confirmed and fixed in `a1b2c3d`. You were right that `occurrence_time` was never
 compared against `evidence.event_time`, so a mapping could bind proof from a
@@ -170,7 +172,7 @@ different occurrence. Reproduced with a failing test first
 ```
 
 ```
-I am <model-slug> writing on behalf of Nagdy.
+I am <model-slug> writing on behalf of <user>.
 
 Declining this one. The nil case you describe is already unreachable. `resolve()`
 returns early at `handlers.py:88` whenever the session is unset, which is the only
@@ -200,23 +202,33 @@ it was deferred. Not just a title.
 
 ## Re-trigger within a fixed budget
 
-One invocation gets the initial harvest plus at most two consolidated repair pushes and two bot
-re-review cycles unless the user explicitly asks to continue. After each push, invite the next round
-from the reviewers that don't re-review on their own. For Codex, mention `@codex review`. For
-debate-review, run it again on the new head. It reviews one head sha per run and skips a head it has
-already reviewed:
+One invocation gets the initial harvest plus at most two consolidated repair pushes and two
+re-review cycles unless the user explicitly asks to continue. After each push you start the next
+round yourself. How depends on the reviewer, because they are triggered in three different ways:
 
-```bash
-node ~/.agents/skills/debate-review/scripts/review-pr.mjs <pr-url>
-```
+- debate-review is a local script, not a bot. You run it, it does the whole review while you wait,
+  and it exits once the review is posted. Nothing to mention, nothing to poll:
 
-Greptile and similar bots re-review pushes on their own. Handle their findings like any other when
-they arrive, but don't summon them.
+  ```bash
+  node "<debate-review skill-dir>/scripts/review-pr.mjs" <pr-url>
+  ```
 
-Wait at most 10 minutes for a bot to review the current head. If it is silent or rate-limited, mark
-that reviewer unavailable; do not wait out a cooldown. The exception is the merge-gate reviewer at
-the merge gate, which has no timeout (see "Before merge"). Even a final test-only, documentation-only,
-or nit-only push gets a round. The merge gate below is meaningless if the last push went unreviewed.
+  (`<debate-review skill-dir>` is wherever that skill is installed, `~/.agents/skills/debate-review`
+  on a standard install.) Run it in the background, keep working, and harvest the moment the command
+  exits. It prints the review URL; exit code 3 means this head was already reviewed. It reviews
+  exactly one head sha per run, so a run after a push always produces a fresh round. A run takes
+  10 to 20 minutes.
+- Codex is a GitHub app. Mention `@codex review` in a PR comment, then wait. It answers 8 to 15
+  minutes later, against whatever head was current when it ran. Check `commit_id` on its review
+  before believing it covers your push.
+- Greptile and similar bots re-review every push on their own. Don't summon them; handle their
+  findings when they show up.
+
+For a bot you are waiting on, wait at most 10 minutes past its usual window. If it is silent or
+rate-limited, mark that reviewer unavailable; do not wait out a cooldown. The one exception is the
+merge-gate reviewer at the merge gate, which has no timeout (see "Before merge"). Even a final
+test-only, documentation-only, or nit-only push gets a round. The merge gate below is meaningless if
+the last push went unreviewed.
 
 Run the repository's required gate once per consolidated repair push; never rerun an already-passing
 gate for the same SHA. If the user says "stop", "enough", or "push whatever you have", cancel active

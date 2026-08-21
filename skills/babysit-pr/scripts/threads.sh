@@ -3,7 +3,7 @@
 #
 # Usage:  threads.sh <pr-number> [owner/repo]
 #         threads.sh 123
-#         threads.sh 123 amElnagdy/asayel-ai-adoption
+#         threads.sh 123 owner/repo
 #
 # Emits JSON on stdout:
 #   .head       the PR's current head SHA. Compare each review's commit_id
