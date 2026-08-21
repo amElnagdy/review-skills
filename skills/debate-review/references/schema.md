@@ -1,9 +1,10 @@
 # debate-review JSON contracts
 
-Three documents flow through one run. Each implementer returns its document as the **only** fenced
-```json block in its final message; the script extracts it and validates the `schema` id.
+Three documents flow through one run. Each implementer returns its document as the only fenced
+```json block in its final message. The script extracts it and checks it against the contract below.
+Anything that fails the check stops the run. Nothing gets posted.
 
-## 1. `debate-review.findings.v1` — main reviewer → script
+## 1. `debate-review.findings.v1`, main reviewer to script
 
 ```json
 {
@@ -20,7 +21,7 @@ Three documents flow through one run. Each implementer returns its document as t
       "severity": "blocking | non-blocking",
       "axis": "correctness | security | spec | standards | tests | docs",
       "claim": "what is wrong, one sentence",
-      "evidence": "why — code path, quoted line, spec line",
+      "evidence": "why: the code path, the quoted line, the spec line",
       "recommendation": "concrete change",
       "confidence": 0.0
     }
@@ -28,14 +29,15 @@ Three documents flow through one run. Each implementer returns its document as t
 }
 ```
 
-- `id`: `F<n>` for main, `D<n>` for findings the debate reviewer adds.
-- `line_start`/`line_end` must be lines **in the PR diff's new side** (GitHub/GitLab can only anchor there).
-  If the problem is outside the diff, anchor to the nearest changed line and say so in `evidence`.
-- `severity` follows babysit-pr: **blocking** = ships a defect / security / data / spec violation /
-  migration hazard / failing check. Everything else is non-blocking.
-- `confidence` 0–1, honest. Findings under `min_confidence` (default 0.5) are dropped before debate.
+- `id` is `F<n>` for the main reviewer and `D<n>` for findings the debate reviewer adds.
+- `line_start` and `line_end` must be lines on the new side of the PR diff, because GitHub and GitLab
+  can only anchor comments there. If the problem is outside the diff, anchor the nearest changed line
+  and say so in `evidence`.
+- `severity` follows babysit-pr. Blocking means it ships a defect, a security or data exposure, a spec
+  violation, a migration hazard, or a failing check. Everything else is non-blocking.
+- `confidence` is 0 to 1. Findings under `min_confidence` (default 0.5) are dropped before debate.
 
-## 2. `debate-review.debate.v1` — debate reviewer → script
+## 2. `debate-review.debate.v1`, debate reviewer to script
 
 ```json
 {
@@ -44,17 +46,18 @@ Three documents flow through one run. Each implementer returns its document as t
   "verdicts": [
     { "id": "F1", "verdict": "confirm | refute | downgrade", "reason": "one sentence", "evidence": "file:line or quoted code" }
   ],
-  "new_findings": [ /* same shape as findings[], ids D1, D2, … */ ]
+  "new_findings": [ /* same shape as findings[], ids D1, D2, ... */ ]
 }
 ```
 
-- Every `F*` id gets exactly one verdict. Missing id = treated as `confirm` with reason "no objection".
-- `downgrade` = real but not blocking (severity → non-blocking), or confidence should drop.
+- Every `F*` id gets exactly one verdict. A missing id counts as `confirm` with reason "no objection".
+- `downgrade` means the defect is real but severity or confidence was overstated.
 - `refute` must carry evidence. A bare "I disagree" is recorded but weighted as `downgrade`.
-- `new_findings` is a gap sweep, not a second review: `blocking` only, with a named trigger. Entries
-  below `min_confidence` are dropped like main's. Zero is the expected outcome on most PRs.
+- `new_findings` is a gap sweep, not a second review. Blocking only, with a named trigger. Entries
+  below `min_confidence` are dropped the same way the main findings are. Zero new findings is the
+  expected outcome on most PRs.
 
-## 3. `debate-review.final.v1` — main reviewer (rebuttal pass) → script → PR
+## 3. `debate-review.final.v1`, main reviewer (rebuttal pass) to script, then to the PR
 
 ```json
 {
@@ -66,25 +69,24 @@ Three documents flow through one run. Each implementer returns its document as t
       "id": "F1",
       "status": "agreed | contested | withdrawn",
       "severity": "blocking | non-blocking",
-      "file": "…", "line_start": 0, "line_end": 0,
-      "claim": "…", "evidence": "…", "recommendation": "…",
-      "debate_note": "one line: what debate said and why main kept/dropped/changed it"
+      "file": "...", "line_start": 0, "line_end": 0,
+      "claim": "...", "evidence": "...", "recommendation": "...",
+      "debate_note": "one line: what the challenge said and why the finding was kept, dropped, or changed"
     }
   ]
 }
 ```
 
-- `agreed`: both models stand behind it → posted normally.
-- `contested`: debate refuted, main holds with evidence → posted with a `contested` tag (or dropped,
-  `--contested drop`).
-- `withdrawn`: main accepts the refutation → never posted, kept in the run log.
-- `D*` findings: main must `agree` or `withdraw` them. A `D*` main rejects with evidence is `withdrawn`
-  (the objection in `debate_note`) — never `contested`, so a rejected second-model claim is never posted.
-  A `D*` that duplicates an `F*` is `withdrawn` with `debate_note` "duplicate of F<n>".
-- The script validates every document against this contract and fails closed (nothing posted) on a
-  violation; artifacts stay in the run directory.
+- `agreed`: both models stand behind it. Posted.
+- `contested`: the debate reviewer refuted it and the main reviewer holds, with evidence. Posted with a
+  `contested` tag, or dropped with `--contested drop`.
+- `withdrawn`: the main reviewer accepts the refutation. Never posted, kept in the run log.
+- `D*` findings can only end as `agreed` or `withdrawn`. A `D*` the main reviewer rejects with evidence
+  is `withdrawn` with the objection in `debate_note`. It is never `contested`, so a rejected claim from
+  the second model is never posted. A `D*` that duplicates an `F*` is `withdrawn` with `debate_note`
+  "duplicate of F<n>".
 
 ## Run log
 
 `<out-dir>/run.json` keeps all three documents plus timings, implementers, lanes, and the posted
-comment ids, keyed by `owner/repo#N@head`. Re-running on the same head is a no-op unless `--force`.
+comment ids, keyed by `owner/repo#N@head`. Re-running on the same head does nothing unless `--force`.

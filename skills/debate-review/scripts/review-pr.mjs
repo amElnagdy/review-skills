@@ -184,7 +184,7 @@ function findStandards(worktree) {
 
 function renderInline(f) {
   let body = `<!-- debate-review:${f.id} status=${f.status} severity=${f.severity} -->\n`;
-  body += `**${f.severity} · ${f.status}** — ${f.claim}\n\n`;
+  body += `**${f.severity}, ${f.status}.** ${f.claim}\n\n`;
   body += `${f.evidence || ''}\n\n`;
   if (f.recommendation) body += `Suggested: ${f.recommendation}\n\n`;
   if (f.debate_note) body += `_${f.debate_note}_\n`;
@@ -196,13 +196,13 @@ function renderBody(who, finalDoc, posted, unanchored) {
   const contested = posted.filter(f => f.status === 'contested').length;
 
   let body = `<!-- debate-review head=${finalDoc.head} main=${who.main.implementer} debate=${who.debate.implementer} agreed=${agreed} contested=${contested} -->\n`;
-  body += `**debate-review** · main: \`${who.main.implementer}\` · debate: \`${who.debate.implementer}\` · ${agreed} agreed · ${contested} contested\n\n`;
+  body += `**debate-review** main \`${who.main.implementer}\`, debate \`${who.debate.implementer}\`. ${agreed} agreed, ${contested} contested.\n\n`;
   body += `${finalDoc.summary || ''}\n`;
 
   if (unanchored.length > 0) {
     body += `\n**Findings outside the diff** (could not be anchored inline):\n`;
     for (const f of unanchored) {
-      body += `\n- **${f.severity} · ${f.status}** \`${f.file}:${f.line_start}\` — ${f.claim}`;
+      body += `\n- **${f.severity}, ${f.status}.** \`${f.file}:${f.line_start}\` ${f.claim}`;
     }
     body += '\n';
   }
@@ -318,7 +318,7 @@ async function main() {
       const a = anchor(lineMap, f);
       if (!a) { unanchored.push(f); continue; }
       let body = renderInline(f);
-      if (a.snapped) body += `\n_(anchored to the nearest diff line; original ${f.line_start}-${f.line_end})_\n`;
+      if (a.snapped) body += `\n_(anchored to the nearest diff line; the finding named ${f.line_start}-${f.line_end})_\n`;
       comments.push({ ...a, body });
     }
     const body = renderBody(who, finalDoc, toPost, unanchored);
