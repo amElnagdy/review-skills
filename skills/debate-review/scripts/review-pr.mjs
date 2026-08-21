@@ -25,7 +25,7 @@ Options:
   --debate-lane <name>      Lane for debate (default: debate).
   --contested post|drop     What to do with findings debate refuted but main kept (default: post).
   --min-confidence <0-1>    Drop main findings below this before debate (default: 0.5).
-  --base <ref>              Base ref override (default: the PR's base branch).
+  --base <ref>              Base ref override (default: the PR's base sha from the forge).
   --repo-dir <dir>          Local clone to use (default: cwd if its origin matches, else a cache clone).
   --out-dir <dir>           Artifacts (default: ~/.cache/debate-review/<owner>__<repo>/<N>/<head>).
   --timeout <dur>           Per-implementer relay watchdog (default: 30m).
@@ -321,7 +321,8 @@ async function main() {
   const save = () => fs.writeFileSync(path.join(outDir, 'run.json'), JSON.stringify(run, null, 2));
 
   try {
-    const baseRef = `origin/${base}`;
+    // Diff against the PR's own base sha (what the forge shows), not the branch tip: still works after merge.
+    const baseRef = o.base || pr.baseSha;
     const diff = out('git', ['-C', wt, 'diff', `${baseRef}...HEAD`]);
     if (!diff.trim()) throw new Error('empty diff — nothing to review');
     const commits = out('git', ['-C', wt, 'log', `${baseRef}..HEAD`, '--oneline']);
