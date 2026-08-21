@@ -3,7 +3,7 @@ name: debate-review
 description: >-
   Review a GitHub pull request or GitLab merge request and post the findings as a review with inline
   comments. Use when the user asks to review a PR/MR, run debate-review, or right after an
-  orchestrator opens a PR.
+  orchestrator opens a PR. Not for local uncommitted diffs.
 license: MIT
 compatibility: Requires Node 18+, `gh` (GitHub) or `glab` (GitLab) authenticated, and delegate-skills installed for the main/debate lanes.
 metadata:
@@ -12,9 +12,47 @@ metadata:
 
 # debate-review
 
-Two models debate before anything is posted: a **main** reviewer finds issues, a **debate** reviewer
+Two models debate before anything is posted. A **main** reviewer finds issues, a **debate** reviewer
 attacks them and adds its own, main makes the final call, and one review with inline comments lands on
-the PR/MR. Implementers come from delegate-skills lanes (`review-main`, `review-debate`).
+the PR/MR — from the user's own `gh`/`glab` account, event `COMMENT` (never approve / request changes).
 
-Phase 1 contract only. See `references/schema.md`, `references/comment-format.md`, `prompts/`.
-Script and hook arrive in Phase 2–3.
+You are the **orchestrator**. You run one command and relay the result; you do not review the diff
+yourself and you do not touch the PR.
+
+## Run it
+
+```bash
+node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
+```
+
+- `<pr-url>` is a GitHub `/pull/N` or GitLab `/-/merge_requests/N` URL; a bare number resolves against
+  the cwd's `origin`.
+- Reviewers come from the delegate-skills fleet: lane `review` (main) and lane `debate` (debate).
+  Override per run with `--main <implementer>` / `--debate <implementer>` or `--main-lane` / `--debate-lane`.
+  Only implementers whose relay has `--read-only` are accepted; the script says so if a lane points elsewhere.
+- `--dry-run` prints the review instead of posting. Use it when the user wants to see before it lands.
+- Exit `3` means this head sha already has a debate-review (re-run with `--force` to post again).
+- Runs take minutes (two or three implementer sessions). Run it in the background and report the
+  printed URL when it finishes; do not poll tightly.
+
+Full flags: `--help`. Contracts: [references/schema.md](references/schema.md). What gets posted:
+[references/comment-format.md](references/comment-format.md). Prompts: `prompts/`.
+
+## After it posts
+
+The review's comments carry `<!-- debate-review:<id> status=… -->` markers. `babysit-pr` recognises
+those and handles them like any other bot round (verify, fix blockers, reply in-thread, resolve).
+Don't act on the findings yourself unless the user asks.
+
+## Auto-trigger on PR creation (optional)
+
+`hooks/claude-code.json` is a Claude Code `PostToolUse` hook: after any `gh pr create` /
+`glab mr create`, `scripts/on-pr-created.mjs` starts `review-pr.mjs` detached on the printed URL and
+returns at once. Logs go to `~/.cache/debate-review/hook-logs/`. Extra flags via
+`DEBATE_REVIEW_ARGS="--contested drop"`. Other orchestrators pipe the same JSON shape to the script
+or call `review-pr.mjs` directly from their own hook.
+
+## Artifacts
+
+`~/.cache/debate-review/<owner>__<repo>/<N>/<head>/` — `run.json` (all three documents, timings,
+what was posted), plus `main/`, `debate/`, `final/` with each brief and relay `result.json`.

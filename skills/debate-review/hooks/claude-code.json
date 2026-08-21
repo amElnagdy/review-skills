@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$HOME/.agents/skills/debate-review/scripts/on-pr-created.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -5,6 +5,18 @@ Sibling of `delegate-skills` (dispatch) and `guard-skills` (review lenses). Cons
 
 | Skill | Job |
 | --- | --- |
-| `debate-review` | Main reviewer reviews the PR → debate reviewer attacks the findings → main makes the final call → one review posted with inline comments. |
+| [`debate-review`](skills/debate-review/SKILL.md) | Main reviewer reviews the PR → debate reviewer attacks the findings and adds its own → main makes the final call → one review with inline comments is posted. |
 
-Install (once published): `npx skills add amElnagdy/review-skills`
+```bash
+npx skills add amElnagdy/review-skills          # once published
+node ~/.agents/skills/debate-review/scripts/review-pr.mjs <pr-url> --dry-run
+```
+
+Reviewers are delegate-skills **lanes** (`review` = main, `debate` = debate), dispatched read-only through
+the existing `*-delegate` relays. Nothing here edits code, commits, or approves a PR.
+
+## Development
+
+```bash
+node --test test/
+```
