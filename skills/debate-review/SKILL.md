@@ -1,9 +1,6 @@
 ---
 name: debate-review
-description: >-
-  Review a GitHub pull request or GitLab merge request and post the findings as a review with inline
-  comments. Use when the user asks to review a PR/MR, run debate-review, or right after an
-  orchestrator opens a PR. Not for local uncommitted diffs.
+description: Two-model debate review of a GitHub PR or GitLab MR, posted as inline comments. Use for any PR/MR review request.
 license: MIT
 compatibility: Requires Node 18+, `gh` (GitHub) or `glab` (GitLab) authenticated, and delegate-skills installed for the main/debate lanes.
 metadata:
@@ -42,7 +39,8 @@ node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
   background and report the printed URL when it finishes. Don't poll tightly.
 
 All flags: `--help`. Contracts: [references/schema.md](references/schema.md). What gets posted:
-[references/comment-format.md](references/comment-format.md). Prompts: `prompts/`.
+[references/comment-format.md](references/comment-format.md). The reviewer briefs live in `assets/prompts/`
+and the script fills them in; you don't need to read them.
 
 ## After it posts
 

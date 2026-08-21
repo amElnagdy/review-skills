@@ -151,7 +151,7 @@ function removeWorktree(clone, dir) {
 // ============================================================ briefs
 
 function prompt(name, vars) {
-  let body = fs.readFileSync(path.join(SKILL_DIR, 'prompts', name), 'utf8');
+  let body = fs.readFileSync(path.join(SKILL_DIR, 'assets', 'prompts', name), 'utf8');
   for (const [key, value] of Object.entries(vars)) {
     body = body.split(`{{${key}}}`).join(value);
   }

@@ -4,6 +4,9 @@ Three documents flow through one run. Each implementer returns its document as t
 ```json block in its final message. The script extracts it and checks it against the contract below.
 Anything that fails the check stops the run. Nothing gets posted.
 
+The script reads sections 1, 2, and 3 below by heading order and pastes them into the briefs. Don't
+reorder them or add a `##` heading above section 3.
+
 ## 1. `debate-review.findings.v1`, main reviewer to script
 
 ```json
