@@ -3,7 +3,7 @@ name: debate-review
 description: >-
   Review a GitHub pull request or GitLab merge request and post the findings as a review with inline
   comments. Use when the user asks to review a PR/MR, run debate-review, or right after an
-  orchestrator opens a PR. Not for local uncommitted diffs.
+  orchestrator opens a PR.
 license: MIT
 compatibility: Requires Node 18+, `gh` (GitHub) or `glab` (GitLab) authenticated, and delegate-skills installed for the main/debate lanes.
 metadata:
