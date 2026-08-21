@@ -1,5 +1,9 @@
 # review-skills
 
+[![tests](https://img.shields.io/github/actions/workflow/status/amElnagdy/review-skills/tests.yml?branch=master&label=tests)](https://github.com/amElnagdy/review-skills/actions/workflows/tests.yml)
+[![skills.sh](https://www.skills.sh/b/amElnagdy/review-skills)](https://www.skills.sh/amElnagdy/review-skills)
+[![License](https://img.shields.io/github/license/amElnagdy/review-skills)](LICENSE)
+
 **Two models argue over a pull request before anything is posted. You keep the merge.**
 
 `debate-review` has a main reviewer read the PR, a second reviewer try to knock its findings down,
