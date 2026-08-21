@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Fake gh for tests: answers the exact calls threads.sh makes with fixture files.
+F="$FIXTURES/github"
+case "$*" in
+  *"graphql"*)                 cat "$F/graphql.json" ;;
+  *"/pulls/"*"/reviews"*)      cat "$F/reviews.json" ;;
+  *"/pulls/"*" -q .user.login"*) echo "alice" ;;
+  *) echo "fake gh: unexpected call: $*" >&2; exit 1 ;;
+esac

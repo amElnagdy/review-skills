@@ -1,0 +1,3 @@
+[[{"id":900,"user":{"login":"alice","type":"User"},"state":"COMMENTED","commit_id":"aaaa1111","submitted_at":"2026-08-21T10:00:00Z","body":"<!-- debate-review head=aaaa1111 main=claude debate=codex agreed=1 contested=0 -->\n**debate-review** main `claude`, debate `codex`. 1 agreed, 0 contested.\n\nShip."},
+  {"id":901,"user":{"login":"chatgpt-codex-connector","type":"Bot"},"state":"COMMENTED","commit_id":"aaaa1111","submitted_at":"2026-08-21T10:05:00Z","body":""},
+  {"id":902,"user":{"login":"greptile-apps","type":"Bot"},"state":"COMMENTED","commit_id":"aaaa0000","submitted_at":"2026-08-21T09:00:00Z","body":"Summary: looks fine"}]]

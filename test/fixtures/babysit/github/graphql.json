@@ -1,0 +1,11 @@
+[{"data":{"repository":{"pullRequest":{"headRefOid":"aaaa1111","reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[
+ {"id":"T1","isResolved":false,"isOutdated":false,"path":"src/a.py","line":12,"originalLine":12,"diffSide":"RIGHT","viewerCanResolve":true,
+  "first":{"totalCount":1,"nodes":[{"databaseId":101,"author":{"login":"alice","__typename":"User"},"body":"<!-- debate-review:F1 status=agreed severity=blocking -->\n**blocking, agreed.** off by one"}]},
+  "last":{"nodes":[{"author":{"login":"alice","__typename":"User"},"body":"<!-- debate-review:F1 status=agreed severity=blocking -->\n**blocking, agreed.** off by one"}]}},
+ {"id":"T2","isResolved":true,"isOutdated":true,"path":"src/b.py","line":null,"originalLine":40,"diffSide":"RIGHT","viewerCanResolve":true,
+  "first":{"totalCount":2,"nodes":[{"databaseId":102,"author":{"login":"chatgpt-codex-connector","__typename":"Bot"},"body":"P1: null deref"}]},
+  "last":{"nodes":[{"author":{"login":"alice","__typename":"User"},"body":"fixed in abc"}]}},
+ {"id":"T3","isResolved":false,"isOutdated":false,"path":"src/c.py","line":3,"originalLine":3,"diffSide":"LEFT","viewerCanResolve":true,
+  "first":{"totalCount":1,"nodes":[{"databaseId":103,"author":{"login":"alice","__typename":"User"},"body":"note to self"}]},
+  "last":{"nodes":[{"author":{"login":"alice","__typename":"User"},"body":"note to self"}]}}
+]}}}}}]

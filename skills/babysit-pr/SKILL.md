@@ -5,8 +5,8 @@ description: Babysit a pull request through its bot review rounds: verify, fix, 
 
 # Babysit a PR
 
-Goal: carry a PR from "just opened" to "nothing left unanswered," without the human having to sit
-and refresh the page.
+Goal: carry a pull request (GitHub) or merge request (GitLab) from "just opened" to "nothing left
+unanswered," without the human having to sit and refresh the page. "PR" below means either.
 
 Review bots are diff-anchored samplers. Every push mints a fresh round, and a fix in one place can
 light up commentary somewhere adjacent. Left alone, a PR accumulates half-answered threads that
@@ -14,8 +14,10 @@ nobody resolves, and the real bug in round three gets buried under nitpicks from
 Your job is to be the person who reads every finding, decides what is actually true, fixes what
 blocks, and closes every loop in writing.
 
-You know how to drive `gh` and git. What follows is only the judgment this loop needs and the few
-API calls that are easy to get wrong.
+You know how to drive `gh` (GitHub), `glab` (GitLab), and git. What follows is only the judgment this
+loop needs and the few API calls that are easy to get wrong. The harvest script picks the forge from
+the cwd's git origin; everything it returns has the same shape on both, with a `capabilities` block
+naming what that forge cannot tell you.
 
 ## The three rules that matter most
 
@@ -40,10 +42,11 @@ them. This is the single most common way a babysit loop goes wrong:
 
 - Inline review threads. This is where debate-review and Codex post their findings (Codex attaches
   P1/P2-badged inline comments to an otherwise boilerplate review body; an empty-looking body proves
-  nothing). Each thread carries a `thread_id` (to resolve) and a `reply_to` comment id (to reply
-  inside the thread). These are GraphQL objects.
-- Top-level review bodies. This is where Greptile summarizes and Codex sometimes posts a numbered
-  list. These are REST objects with no thread to resolve; answer them with one PR comment per round.
+  nothing). Each thread carries a `thread_id` (to resolve) and a `reply_to` (to reply inside the
+  thread). On GitHub these are GraphQL review threads; on GitLab they are discussions.
+- Top-level review bodies. This is where Greptile summarizes, Codex sometimes posts a numbered list,
+  and debate-review posts its round summary. These have no thread to resolve; answer them with one PR
+  comment per round. On GitHub they are review objects; on GitLab they are plain notes.
 
 The bundled script returns both in one call, already correlated (`<skill-dir>` is the folder that
 holds this SKILL.md):
@@ -70,17 +73,26 @@ missing from the harvest means "wrapper", not "gone".
 Diff it against the previous round's file to see what is genuinely new. `outdated: true` on a thread
 means the line moved underneath it. The finding may already be fixed, so check it against current
 code before spending the round on it. A `comment_count` bump on a thread you already handled means a
-bot followed up inside it. Each review carries its `commit_id`; compare it to `head` to know whether
-that bot has actually reviewed the current push.
+bot followed up inside it.
 
-Two kinds of author count as a reviewer. First, any `[bot]` author. Don't hardcode a whitelist,
-since repos add and swap bots; `chatgpt-codex-connector` and `greptile-apps` are the usual ones.
-Second, any thread whose first comment carries a `<!-- debate-review:... -->` marker. debate-review
-posts from the PR owner's own account, so the author login is a human's, but the thread is a reviewer
-thread. The harvest flags these as `debate_review: true` with `debate_id`, `debate_status`, and
-`debate_severity` parsed from the marker; its review body shows up in `.reviews` with `debate_head`,
-the sha it reviewed. Treat them like any other bot thread. A human's comment without that marker is
-never in scope for autonomous fixing. Surface it to the user instead.
+Has this reviewer seen the current push? Only trust a field that names a sha. On GitHub each review
+carries `commit_id`; compare it to `head`. For debate-review on either forge, the round body's
+`debate_head` is the sha it reviewed. On GitLab other reviewers' notes carry no sha (`capabilities.
+review_commit_id: false`); a note's timestamp being later than your push does not prove it reviewed
+that push, so say "coverage unknown" rather than guessing.
+
+Two kinds of author count as a reviewer. First, a bot: `author_bot: true` in the harvest. On GitHub
+that comes from the API's own author type and is reliable (`chatgpt-codex-connector` and
+`greptile-apps` are the usual ones; don't hardcode a whitelist). On GitLab the API only sometimes
+says, so `author_bot` can be `null`; treat `null` as unknown, look at the thread, and say in your
+report that you could not confirm it. Second, any thread whose first comment carries a
+`<!-- debate-review:... -->` marker. debate-review posts from the user's own account, so the author
+is the PR author (`author_is_pr_author: true`), but the thread is a reviewer thread. The harvest
+flags these as `debate_review: true` with `debate_id`, `debate_status`, and `debate_severity` parsed
+from the marker; its round body shows up in `.reviews` with `debate_head` (the sha it reviewed) and
+`debate_agreed` / `debate_contested`. Treat them like any other bot thread. Anything else from the PR
+author, and any human's comment without that marker, is never in scope for autonomous fixing.
+Surface it to the user instead.
 
 Bots post 5 to 10 minutes after a push, longer on a big diff. Don't poll tightly; background the wait
 and review the diff yourself meanwhile. A round is "in" once every reviewer you expect has either
@@ -141,9 +153,11 @@ be covered by a clean round from the merge-gate reviewer before merge (see "Befo
 publication or verification fails, leave the thread open and report the blocker.
 
 Answer inside the thread the finding came from. A fresh top-level comment leaves the original thread
-open and forces the reader to correlate by hand. The reply endpoint takes the REST comment id;
-resolution takes the GraphQL thread id. Two different identifiers for the same conversation, which is
-why the harvest script returns both:
+open and forces the reader to correlate by hand. Use the harvest's `reply_to` to reply and `thread_id`
+to resolve. On GitHub those are two different identifiers (REST comment id, GraphQL thread id); on
+GitLab both are the discussion id.
+
+GitHub:
 
 ```bash
 gh api --method POST "repos/<owner>/<repo>/pulls/<N>/comments/<reply_to>/replies" \
@@ -153,10 +167,25 @@ gh api graphql -f query='mutation($t:ID!){
   resolveReviewThread(input:{threadId:$t}){ thread{ isResolved } } }' -F t="<thread_id>"
 ```
 
+GitLab (`<project>` is the URL-encoded `group/path`, `--hostname` your instance):
+
+```bash
+glab api --hostname <host> --method POST "projects/<project>/merge_requests/<N>/discussions/<reply_to>/notes" \
+  --raw-field "body=$(cat /tmp/reply.md)"
+
+glab api --hostname <host> --method PUT "projects/<project>/merge_requests/<N>/discussions/<thread_id>" \
+  -F resolved=true
+```
+
+The GitLab reply and resolve calls are taken from the GitLab API docs and have not yet been exercised
+against a live instance from this skill. The first time you use them, check the response, and if
+either fails, stop and report rather than retrying variations.
+
 Attribution. Open every reply by naming the model writing it and the person it writes for, so a
 reader never has to guess whether a human weighed in. Sign your own model name; this skill is
-model-neutral. The person is whoever owns the `gh` account the reply posts from. Get the name once
-per session with `gh api user -q '.name // .login'` and reuse it:
+model-neutral. The person is whoever owns the account the reply posts from. Get the name once per
+session, `gh api user -q '.name // .login'` on GitHub or `glab api user --hostname <host> | jq -r
+'.name // .username'` on GitLab, and reuse it:
 
 > I am \<model-slug\> writing on behalf of \<user\>.
 
@@ -206,8 +235,9 @@ One invocation gets the initial harvest plus at most two consolidated repair pus
 re-review cycles unless the user explicitly asks to continue. After each push you start the next
 round yourself. How depends on the reviewer, because they are triggered in three different ways:
 
-- debate-review is a local script, not a bot. You run it, it does the whole review while you wait,
-  and it exits once the review is posted. Nothing to mention, nothing to poll:
+- debate-review is a local script, not a bot, and it works on both forges. You run it, it does the
+  whole review while you wait, and it exits once the review is posted. Nothing to mention, nothing
+  to poll:
 
   ```bash
   node "<debate-review skill-dir>/scripts/review-pr.mjs" <pr-url>
@@ -218,9 +248,9 @@ round yourself. How depends on the reviewer, because they are triggered in three
   exits. It prints the review URL; exit code 3 means this head was already reviewed. It reviews
   exactly one head sha per run, so a run after a push always produces a fresh round. A run takes
   10 to 20 minutes.
-- Codex is a GitHub app. Mention `@codex review` in a PR comment, then wait. It answers 8 to 15
-  minutes later, against whatever head was current when it ran. Check `commit_id` on its review
-  before believing it covers your push.
+- Codex is a GitHub app (there is no GitLab equivalent). Mention `@codex review` in a PR comment,
+  then wait. It answers 8 to 15 minutes later, against whatever head was current when it ran. Check
+  `commit_id` on its review before believing it covers your push.
 - Greptile and similar bots re-review every push on their own. Don't summon them; handle their
   findings when they show up.
 
@@ -252,8 +282,11 @@ clean round is Codex saying so in plain words ("no findings", "good job") agains
 reply yet is not a pass. Codex answers 8 to 15 minutes after a push, and merging inside that window
 is how a real finding lands minutes after the merge.
 
-Where debate-review is the reviewer, run it on the final head. A clean round is its review body
-reporting zero agreed and zero contested findings with `debate_head` equal to the final head sha.
+Where debate-review is the reviewer (on GitLab it is usually the only one), run it on the final head.
+A clean round is all three of: its round body present in `.reviews` with `debate_head` equal to the
+final head sha, `debate_agreed` and `debate_contested` both zero, and no unresolved reviewer threads.
+If the body is missing (a run can fail after posting inline comments), the gate has not been met;
+re-run it, don't infer.
 
 Either way, a finding is a new round, not a merge. Silence well past the usual window is something
 to report to the user, not approval.
