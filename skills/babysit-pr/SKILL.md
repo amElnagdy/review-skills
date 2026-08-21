@@ -133,6 +133,9 @@ Don't stop to ask about blockers. Verify, fix, push, keep watching, report what 
 - One push per round, not one per finding. Every push mints a new bot round, so per-finding pushes
   multiply the rounds you have to sit through.
 - Run the repo's own gate before pushing. A fix that breaks the suite costs a whole extra round.
+- If a matching guard skill is installed (clean-code-guard, test-guard, wp-guard, woo-guard from
+  guard-skills), run it on your fix before pushing. The guards catch the failure modes a quick fix
+  under review pressure tends to produce.
 - When you disagree, prove it. Rejecting a finding is legitimate and common, but the reply has to
   carry the evidence: the code path, the guard that already handles it, or the test that pins the
   behavior. "This is fine" is not a rejection.
