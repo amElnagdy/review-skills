@@ -107,16 +107,16 @@ export function fetchSpec(t, pr, commitsText) {
     try {
       if (t.host === 'github') {
         const issue = json('gh', ['issue', 'view', n, '--repo', projectPath(t), '--json', 'title,body,url']);
-        parts.push(`Issue #${n} — ${issue.title}\n${issue.url}\n${issue.body || ''}`);
+        parts.push(`Issue #${n}: ${issue.title}\n${issue.url}\n${issue.body || ''}`);
       } else {
         const issue = json('glab', ['api', `projects/${glabProject(t)}/issues/${n}`], { env: glabEnv(t) });
-        parts.push(`Issue #${n} — ${issue.title}\n${issue.web_url}\n${issue.description || ''}`);
+        parts.push(`Issue #${n}: ${issue.title}\n${issue.web_url}\n${issue.description || ''}`);
       }
     } catch {
-      // "#12" was not an issue (PR number, plain text) — skip it
+      // "#12" was not an issue (PR number, plain text). skip it
     }
   }
-  if (parts.length === 0) return 'none found — skip the Spec axis';
+  if (parts.length === 0) return 'none found, skip the Spec axis';
   return parts.join('\n\n---\n\n').slice(0, 8000);
 }
 
@@ -124,7 +124,7 @@ export function fetchSpec(t, pr, commitsText) {
 
 /**
  * Post one review with inline comments. `comments` items: { path, line, start_line?, body }.
- * Event is always COMMENT — never approve/request-changes on the author's behalf.
+ * Event is always COMMENT. never approve/request-changes on the author's behalf.
  */
 export function postReview(t, pr, body, comments) {
   if (t.host === 'github') return postGithub(t, pr, body, comments);

@@ -56,7 +56,7 @@ export function validateFindings(doc, role = 'main') {
 }
 
 /**
- * debate-review.debate.v1 — checked against the findings it answers.
+ * debate-review.debate.v1. checked against the findings it answers.
  * Missing verdicts are filled as confirm ("no objection"), as schema.md promises; duplicates are errors.
  */
 export function validateDebate(doc, findings, role = 'debate') {
@@ -82,7 +82,7 @@ export function validateDebate(doc, findings, role = 'debate') {
   return doc;
 }
 
-/** debate-review.final.v1 — every F* and D* must come back with a status; nothing may appear from nowhere. */
+/** debate-review.final.v1. every F* and D* must come back with a status; nothing may appear from nowhere. */
 export function validateFinal(doc, findings, debate, role = 'final') {
   if (!doc || doc.schema !== 'debate-review.final.v1') throw problem(role, 'expected schema debate-review.final.v1');
   if (!Array.isArray(doc.findings)) throw problem(role, 'findings must be an array');
@@ -97,7 +97,7 @@ export function validateFinal(doc, findings, debate, role = 'final') {
 
   for (const f of doc.findings) {
     if (f.id.startsWith('D') && f.status === 'contested') {
-      throw problem(role, `${f.id}: a D* finding cannot be contested — agreed or withdrawn only`);
+      throw problem(role, `${f.id}: a D* finding cannot be contested, only agreed or withdrawn`);
     }
   }
   return doc;

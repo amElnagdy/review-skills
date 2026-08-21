@@ -22,14 +22,14 @@ function findScript(skill, script) {
     const candidate = path.join(root, skill, 'scripts', script);
     if (fs.existsSync(candidate)) return candidate;
   }
-  throw new Error(`cannot find ${skill}/scripts/${script} — install delegate-skills (looked in: ${skillRoots().join(', ') || 'no skills dir'})`);
+  throw new Error(`cannot find ${skill}/scripts/${script}. Install delegate-skills (looked in: ${skillRoots().join(', ') || 'no skills dir'})`);
 }
 
 // ---------- lanes ----------
 
 /**
  * Decide who plays a role. An explicit implementer wins; otherwise read the lane from the fleet config.
- * Returns { implementer, lane } — lane is null when the implementer was given explicitly.
+ * Returns { implementer, lane }. lane is null when the implementer was given explicitly.
  */
 export function resolveRole(role, { explicit, lane, cwd }) {
   if (explicit) return { implementer: explicit, lane: null };
@@ -37,7 +37,7 @@ export function resolveRole(role, { explicit, lane, cwd }) {
   const config = json('node', [findScript('delegate-setup', 'config.mjs'), 'load', '--cwd', cwd]);
   const entry = config.lanes && config.lanes[lane];
   if (!entry) {
-    throw new Error(`lane "${lane}" is not configured — run delegate-setup, or pass --${role} <implementer>`);
+    throw new Error(`lane "${lane}" is not configured. Run delegate-setup, or pass --${role} <implementer>`);
   }
   return { implementer: entry.implementer, lane };
 }
@@ -90,7 +90,7 @@ export function dispatch({ role, who, brief, cwd, outDir, timeout }) {
     throw new Error(`${role}: relay finished with status "${result.status}" (see ${dir})`);
   }
   if (result.readOnlyViolation === true) {
-    log(`WARNING ${role}: relay reported a read-only violation — inspect ${dir}`);
+    log(`WARNING ${role}: relay reported a read-only violation. Inspect ${dir}`);
   }
 
   log(`${role}: done in ${seconds}s`);
