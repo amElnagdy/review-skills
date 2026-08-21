@@ -158,7 +158,7 @@ function prompt(name, vars) {
   return body;
 }
 
-/** Section n of references/schema.md ("## 1.", "## 2.", "## 3.") — the schema text the implementer sees. */
+/** Section n of references/schema.md ("## 1.", "## 2.", "## 3."), the schema text the implementer sees. */
 function schemaSection(n) {
   const md = fs.readFileSync(path.join(SKILL_DIR, 'references', 'schema.md'), 'utf8');
   return '## ' + md.split(/^## /m)[n];
@@ -177,7 +177,7 @@ function findStandards(worktree) {
       found.push(rel);
     }
   }
-  return found.length ? found.join(', ') : 'none found — skip the Standards axis';
+  return found.length ? found.join(', ') : 'none found, skip the Standards axis';
 }
 
 // ============================================================ rendering
@@ -238,7 +238,7 @@ async function main() {
 
   try {
     const diff = text('git', ['-C', worktree, 'diff', `${baseRef}...HEAD`]);
-    if (!diff.trim()) throw new Error('empty diff — nothing to review');
+    if (!diff.trim()) throw new Error('empty diff, nothing to review');
     const commits = text('git', ['-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline']);
     const lineMap = diffLineMap(diff);
 
