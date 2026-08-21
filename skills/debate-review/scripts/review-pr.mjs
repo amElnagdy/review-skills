@@ -19,7 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { run, text, log } from './lib/shell.mjs';
 import { parseTarget, parseOrigin, projectPath, fetchPR, alreadyReviewed, fetchSpec, postReview } from './lib/forge.mjs';
 import { diffLineMap, anchor } from './lib/diff.mjs';
-import { resolveRole, dispatch, extractJson, expectSchema } from './lib/dispatch.mjs';
+import { resolveRole, dispatch, extractJson } from './lib/dispatch.mjs';
+import { validateFindings, validateDebate, validateFinal } from './lib/validate.mjs';
 
 const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -34,7 +35,7 @@ Options:
   --main-lane <name>        Fleet lane for main (default: review).
   --debate-lane <name>      Fleet lane for debate (default: debate).
   --contested post|drop     Findings debate refuted but main kept (default: post, tagged).
-  --min-confidence <0-1>    Drop main findings below this before debate (default: 0.5).
+  --min-confidence <0-1>    Drop findings (main F* and debate D*) below this confidence (default: 0.5).
   --base <ref>              Base override (default: the PR's base sha from the forge).
   --repo-dir <dir>          Local clone to use (default: cwd if its origin matches, else a cache clone).
   --out-dir <dir>           Artifacts (default: ~/.cache/debate-review/<owner>__<repo>/<N>/<head>).
@@ -264,8 +265,8 @@ async function main() {
       SCHEMA_FINDINGS: schemaSection(1),
     });
     const mainRun = send('main', who.main, mainBrief);
-    const findings = expectSchema(extractJson(mainRun.text), 'debate-review.findings.v1', 'main');
-    findings.findings = (findings.findings || []).filter(f => (f.confidence ?? 1) >= opts.minConfidence);
+    const findings = validateFindings(extractJson(mainRun.text));
+    findings.findings = findings.findings.filter(f => (f.confidence ?? 1) >= opts.minConfidence);
     runLog.stages.main = { seconds: mainRun.seconds, doc: findings };
     save();
     log(`main: ${findings.findings.length} finding(s) after the confidence filter`);
@@ -277,14 +278,15 @@ async function main() {
       SCHEMA_DEBATE: schemaSection(2),
     });
     const debateRun = send('debate', who.debate, debateBrief);
-    const debate = expectSchema(extractJson(debateRun.text), 'debate-review.debate.v1', 'debate');
+    const debate = validateDebate(extractJson(debateRun.text), findings);
+    debate.new_findings = debate.new_findings.filter(f => (f.confidence ?? 1) >= opts.minConfidence);
     runLog.stages.debate = { seconds: debateRun.seconds, doc: debate };
     save();
-    log(`debate: ${(debate.verdicts || []).length} verdict(s), ${(debate.new_findings || []).length} new finding(s)`);
+    log(`debate: ${debate.verdicts.length} verdict(s), ${debate.new_findings.length} new finding(s) after the confidence filter`);
 
     // --- 3. final call (skipped when there is nothing to argue about)
     let finalDoc;
-    const nothingToDebate = findings.findings.length === 0 && (debate.new_findings || []).length === 0;
+    const nothingToDebate = findings.findings.length === 0 && debate.new_findings.length === 0;
     if (nothingToDebate) {
       finalDoc = {
         schema: 'debate-review.final.v1',
@@ -300,7 +302,7 @@ async function main() {
         SCHEMA_FINAL: schemaSection(3),
       });
       const finalRun = send('final', who.main, finalBrief);
-      finalDoc = expectSchema(extractJson(finalRun.text), 'debate-review.final.v1', 'final');
+      finalDoc = validateFinal(extractJson(finalRun.text), findings, debate);
       runLog.stages.final = { seconds: finalRun.seconds, doc: finalDoc };
     }
     finalDoc.head = pr.head;

@@ -56,3 +56,22 @@ test('review-pr: usage errors exit 2', () => {
   assert.equal(spawnSync('node', [script, '1', '--contested', 'maybe'], { encoding: 'utf8' }).status, 2);
   assert.equal(spawnSync('node', [script, '--help'], { encoding: 'utf8' }).status, 0);
 });
+
+test('validate: contract checks fail closed and fill missing verdicts', async () => {
+  const { validateFindings, validateDebate, validateFinal } = await import('../skills/debate-review/scripts/lib/validate.mjs');
+  const f = (id, extra = {}) => ({ id, file: 'a.py', line_start: 3, line_end: 4, severity: 'blocking', claim: 'x', confidence: 0.8, ...extra });
+  const findings = validateFindings({ schema: 'debate-review.findings.v1', verdict: 'needs-attention', findings: [f('F1'), f('F2')] });
+  assert.throws(() => validateFindings({ schema: 'debate-review.findings.v1', verdict: 'approve', findings: [f('F1', { severity: 'p1' })] }), /severity/);
+  assert.throws(() => validateFindings({ schema: 'debate-review.findings.v1', verdict: 'approve', findings: [f('F1'), f('F1')] }), /duplicate/);
+
+  const debate = validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F1', verdict: 'refute', reason: 'r', evidence: 'e' }], new_findings: [f('D1')] }, findings);
+  assert.deepEqual(debate.verdicts.map(v => `${v.id}:${v.verdict}`), ['F1:refute', 'F2:confirm']); // F2 filled as "no objection"
+  assert.throws(() => validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F9', verdict: 'confirm' }] }, findings), /unknown finding/);
+  assert.throws(() => validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F1', verdict: 'confirm' }, { id: 'F1', verdict: 'refute' }] }, findings), /more than one/);
+
+  const ok = [f('F1', { status: 'withdrawn' }), f('F2', { status: 'agreed' }), f('D1', { status: 'agreed' })];
+  validateFinal({ schema: 'debate-review.final.v1', findings: ok }, findings, debate);
+  assert.throws(() => validateFinal({ schema: 'debate-review.final.v1', findings: ok.slice(0, 2) }, findings, debate), /dropped silently/);
+  assert.throws(() => validateFinal({ schema: 'debate-review.final.v1', findings: [...ok, f('F7', { status: 'agreed' })] }, findings, debate), /from nowhere/);
+  assert.throws(() => validateFinal({ schema: 'debate-review.final.v1', findings: [ok[0], ok[1], f('D1', { status: 'contested' })] }, findings, debate), /cannot be contested/);
+});

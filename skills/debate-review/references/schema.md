@@ -51,6 +51,8 @@ Three documents flow through one run. Each implementer returns its document as t
 - Every `F*` id gets exactly one verdict. Missing id = treated as `confirm` with reason "no objection".
 - `downgrade` = real but not blocking (severity → non-blocking), or confidence should drop.
 - `refute` must carry evidence. A bare "I disagree" is recorded but weighted as `downgrade`.
+- `new_findings` is a gap sweep, not a second review: `blocking` only, with a named trigger. Entries
+  below `min_confidence` are dropped like main's. Zero is the expected outcome on most PRs.
 
 ## 3. `debate-review.final.v1` — main reviewer (rebuttal pass) → script → PR
 
@@ -76,8 +78,11 @@ Three documents flow through one run. Each implementer returns its document as t
 - `contested`: debate refuted, main holds with evidence → posted with a `contested` tag (or dropped,
   `--contested drop`).
 - `withdrawn`: main accepts the refutation → never posted, kept in the run log.
-- `D*` findings: main must `agree` or `withdraw` them too; a `D*` main rejects with evidence is
-  `contested` (debate's claim, main's objection in `debate_note`).
+- `D*` findings: main must `agree` or `withdraw` them. A `D*` main rejects with evidence is `withdrawn`
+  (the objection in `debate_note`) — never `contested`, so a rejected second-model claim is never posted.
+  A `D*` that duplicates an `F*` is `withdrawn` with `debate_note` "duplicate of F<n>".
+- The script validates every document against this contract and fails closed (nothing posted) on a
+  violation; artifacts stay in the run directory.
 
 ## Run log
 
