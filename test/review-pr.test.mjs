@@ -66,3 +66,15 @@ test('validate: contract checks fail closed and fill missing verdicts', async ()
   assert.throws(() => validateFinal({ schema: 'debate-review.final.v1', findings: [...ok, f('F7', { status: 'agreed' })] }, findings, debate), /from nowhere/);
   assert.throws(() => validateFinal({ schema: 'debate-review.final.v1', findings: [ok[0], ok[1], f('D1', { status: 'contested' })] }, findings, debate), /cannot be contested/);
 });
+
+test('babysit-pr threads.sh: jq parses debate-review markers', () => {
+  const thread = { body: '<!-- debate-review:F2 status=contested severity=blocking -->\n**blocking, contested.** claim' };
+  const plain = { body: 'just a human comment' };
+  const filter = `. + (.body | capture("<!-- debate-review:(?<debate_id>[FD][0-9]+) status=(?<debate_status>[a-z-]+) severity=(?<debate_severity>[a-z-]+) -->") // {debate_id:null, debate_status:null, debate_severity:null}) | . + {debate_review: (.debate_id != null)}`;
+  const run = (obj) => JSON.parse(spawnSync('jq', ['-c', filter], { input: JSON.stringify(obj), encoding: 'utf8' }).stdout);
+  assert.deepEqual(run(thread), { ...thread, debate_id: 'F2', debate_status: 'contested', debate_severity: 'blocking', debate_review: true });
+  assert.deepEqual(run(plain), { ...plain, debate_id: null, debate_status: null, debate_severity: null, debate_review: false });
+  const review = { body: '<!-- debate-review head=0c600c904ab6 main=claude debate=codex agreed=4 contested=0 -->\nx' };
+  const rf = `. + ((.body | capture("<!-- debate-review head=(?<debate_head>[0-9a-f]+)")) // {debate_head:null}) | . + {debate_review: (.debate_head != null)}`;
+  assert.equal(JSON.parse(spawnSync('jq', ['-c', rf], { input: JSON.stringify(review), encoding: 'utf8' }).stdout).debate_head, '0c600c904ab6');
+});

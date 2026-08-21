@@ -7,10 +7,12 @@ anything is posted. Sibling of `delegate-skills` (which dispatches the models) a
 | Skill | Job |
 | --- | --- |
 | [`debate-review`](skills/debate-review/SKILL.md) | A main reviewer reads the PR. A debate reviewer tries to knock its findings down and may add its own. The main reviewer makes the final call. One review with inline comments is posted. |
+| [`babysit-pr`](skills/babysit-pr/SKILL.md) | The other half of the loop. Harvests every reviewer thread on a PR (debate-review, Codex, Greptile, any `[bot]`), verifies each finding against the code, fixes the blockers, replies in-thread with attribution, resolves, and re-triggers the next round. |
 
 ```bash
 npx skills add amElnagdy/review-skills          # once published
-node ~/.agents/skills/debate-review/scripts/review-pr.mjs <pr-url> --dry-run
+node ~/.agents/skills/debate-review/scripts/review-pr.mjs <pr-url> --dry-run   # review
+~/.agents/skills/babysit-pr/scripts/threads.sh <pr-number>                      # harvest a round
 ```
 
 The two reviewers are delegate-skills lanes named `review-main` and `review-debate`, dispatched
