@@ -55,8 +55,8 @@ bar become findings.
   the defect, never more than ten. If the defect is outside the diff, anchor the nearest changed line
   and say so in `evidence`.
 - `claim`, `evidence`, and `recommendation` are posted as an inline comment on a colleague's PR. One
-  short paragraph each. At most three lines of quoted code. Matter-of-fact. No flattery. No severity
-  inflation. Say which inputs the bug depends on.
+  short paragraph each. At most three lines of quoted code. Matter-of-fact, plain punctuation (no em
+  dashes). No flattery. No severity inflation. Say which inputs the bug depends on.
 - Do not stop at the first qualifying finding, and do not pad. Zero findings with `verdict: approve`
   is the correct answer for a clean diff. Under 15 findings. `summary` under 300 words.
 

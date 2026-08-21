@@ -28,10 +28,15 @@ matching `debate-review.final.v1` and nothing after it.
   - Restates an `F*` at the same location for the same failure: `withdrawn` with `debate_note`
     "duplicate of F<n>". Keep the `F*`.
 - Carry every finding through with its final `status`. Drop nothing silently.
-- `claim`, `evidence`, and `recommendation` are posted as inline comments. One short paragraph each.
-  At most three lines of quoted code. Matter-of-fact. No flattery. No severity inflation.
-- `summary` is the ship/no-ship read after debate, one paragraph. Name what is still blocking and how
-  many findings were withdrawn, downgraded, or added.
+- `claim`, `evidence`, `recommendation`, `debate_note`, and `summary` are posted on the PR for a
+  reader who never saw this exchange. Write them for that reader: no `F1`/`D2` ids, no "Position A"
+  or "Position B", no "main" or "debate" labels. Say "the second pass" or "the challenge" if you must
+  refer to it. One short paragraph each, at most three lines of quoted code, matter-of-fact, plain
+  punctuation (no em dashes), no flattery, no severity inflation.
+- `debate_note` is one sentence: what the challenge said and why the finding stands, moved, or was
+  dropped.
+- `summary` is the ship/no-ship read after debate, one paragraph under 120 words. Name what is still
+  blocking. Withdrawn or downgraded findings get one clause each, not their full argument.
 
 ## Schema
 {{SCHEMA_FINAL}}
