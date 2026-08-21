@@ -1,6 +1,10 @@
 ---
 name: babysit-pr
-description: Babysit a pull request through its bot review rounds: verify, fix, reply, resolve. Use for any babysit or watch-the-PR ask.
+description: "Babysit a pull request through its bot review rounds: verify, fix, reply, resolve. Use for any babysit or watch-the-PR ask."
+license: MIT
+compatibility: Requires `gh` (GitHub) or `glab` (GitLab) authenticated, plus `jq` and bash for the thread harvester.
+metadata:
+  version: 0.1.0
 ---
 
 # Babysit a PR
