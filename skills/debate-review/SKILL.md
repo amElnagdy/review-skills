@@ -27,9 +27,12 @@ node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
 
 - `<pr-url>` is a GitHub `/pull/N` or GitLab `/-/merge_requests/N` URL; a bare number resolves against
   the cwd's `origin`.
-- Reviewers come from the delegate-skills fleet: lane `review` (main) and lane `debate` (debate).
-  Override per run with `--main <implementer>` / `--debate <implementer>` or `--main-lane` / `--debate-lane`.
-  Only implementers whose relay has `--read-only` are accepted; the script says so if a lane points elsewhere.
+- Reviewers come from two delegate-skills fleet lanes: **`review-main`** and **`review-debate`**. If they
+  are missing, the script says so — add them with `delegate-setup` (pick two *different* implementers;
+  debate is strongest when heterogeneous, e.g. main `claude`/`grok`, debate `codex` at high effort), or
+  pass `--main <implementer>` / `--debate <implementer>` for a one-off. Only implementers whose relay has
+  `--read-only` are accepted. These lanes are the reviewer's own; they do not reuse any lane you keep for
+  other work (a plan-debate lane, a tests lane…).
 - `--dry-run` prints the review instead of posting. Use it when the user wants to see before it lands.
 - Exit `3` means this head sha already has a debate-review (re-run with `--force` to post again).
 - Runs take minutes (two or three implementer sessions). Run it in the background and report the

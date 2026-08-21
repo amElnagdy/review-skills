@@ -12,7 +12,7 @@ npx skills add amElnagdy/review-skills          # once published
 node ~/.agents/skills/debate-review/scripts/review-pr.mjs <pr-url> --dry-run
 ```
 
-Reviewers are delegate-skills **lanes** (`review` = main, `debate` = debate), dispatched read-only through
+Reviewers are two delegate-skills **lanes** of their own (`review-main`, `review-debate`), dispatched read-only through
 the existing `*-delegate` relays. Nothing here edits code, commits, or approves a PR.
 
 ## Development

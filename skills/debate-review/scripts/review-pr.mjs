@@ -32,8 +32,8 @@ Usage:
 Options:
   --main <implementer>      Main reviewer (claude|codex|cursor|grok|opencode|pi…). Default: the lane.
   --debate <implementer>    Debate reviewer. Default: the lane.
-  --main-lane <name>        Fleet lane for main (default: review).
-  --debate-lane <name>      Fleet lane for debate (default: debate).
+  --main-lane <name>        Fleet lane for main (default: review-main).
+  --debate-lane <name>      Fleet lane for debate (default: review-debate).
   --contested post|drop     Findings debate refuted but main kept (default: post, tagged).
   --min-confidence <0-1>    Drop findings (main F* and debate D*) below this confidence (default: 0.5).
   --base <ref>              Base override (default: the PR's base sha from the forge).
@@ -52,8 +52,8 @@ Exit codes: 0 posted/dry-run · 1 failure · 2 usage · 3 head already reviewed 
 
 function parseArgs(argv) {
   const opts = {
-    mainLane: 'review',
-    debateLane: 'debate',
+    mainLane: 'review-main',
+    debateLane: 'review-debate',
     contested: 'post',
     minConfidence: 0.5,
     timeout: '30m',
