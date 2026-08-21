@@ -1,6 +1,6 @@
 ---
 name: babysit-pr
-description: Babysit a GitHub PR through its bot review rounds: verify, fix, reply, resolve. Use for any babysit or watch-the-PR ask.
+description: Babysit a pull request through its bot review rounds: verify, fix, reply, resolve. Use for any babysit or watch-the-PR ask.
 ---
 
 # Babysit a PR
