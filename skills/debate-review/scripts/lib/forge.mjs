@@ -1,19 +1,21 @@
 // Everything that talks to GitHub (gh) or GitLab (glab): identify the PR, read it, post the review.
-import { text, json } from './shell.mjs';
+import { run, text, json } from './shell.mjs';
 
 // ---------- identify the target ----------
 
 /** Turn a PR URL or a bare number (+ git origin) into { host, origin, owner, repo, number }. */
 export function parseTarget(target, originUrl) {
-  const github = target.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/pull\/(\d+)/);
-  if (github) {
-    return { host: 'github', origin: 'github.com', owner: github[1], repo: github[2], number: Number(github[3]) };
-  }
-
+  // GitLab first: `/-/merge_requests/` is unambiguous. Anything else with `/pull/` is
+  // GitHub, on github.com or on a GitHub Enterprise host, which can be named anything.
   const gitlab = target.match(/^https?:\/\/([^/]+)\/(.+?)\/-\/merge_requests\/(\d+)/);
   if (gitlab) {
     const segments = gitlab[2].split('/');
     return { host: 'gitlab', origin: gitlab[1], owner: segments.slice(0, -1).join('/'), repo: segments.at(-1), number: Number(gitlab[3]) };
+  }
+
+  const github = target.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/pull\/(\d+)/);
+  if (github) {
+    return { host: 'github', origin: github[1].toLowerCase(), owner: github[2], repo: github[3], number: Number(github[4]) };
   }
 
   if (/^\d+$/.test(target)) {
@@ -33,11 +35,33 @@ export function parseOrigin(url) {
   const origin = m[1].toLowerCase();
   const segments = m[2].split('/');
   return {
-    host: origin === 'github.com' ? 'github' : 'gitlab',
+    host: detectHost(origin),
     origin,
     owner: segments.slice(0, -1).join('/'),
     repo: segments.at(-1),
   };
+}
+
+const hostCache = new Map();
+
+/**
+ * github or gitlab for an arbitrary origin. A GitHub Enterprise host can be named
+ * anything, so ask gh whether it is logged in there rather than matching on the name;
+ * that is also the check that decides whether the gh calls below can work at all.
+ * No gh, or not logged in to that host, means gitlab.
+ */
+function detectHost(origin) {
+  if (origin === 'github.com') return 'github';
+  if (!hostCache.has(origin)) {
+    let ok = false;
+    try {
+      ok = run('gh', ['auth', 'status', '--hostname', origin], { allowFail: true }).status === 0;
+    } catch {
+      ok = false; // gh not installed
+    }
+    hostCache.set(origin, ok ? 'github' : 'gitlab');
+  }
+  return hostCache.get(origin);
 }
 
 export function projectPath(t) {
@@ -52,14 +76,20 @@ function glabEnv(t) {
   return { ...process.env, GITLAB_HOST: t.origin };
 }
 
+// GH_HOST points gh at the right instance; a no-op when the origin is github.com.
+function ghEnv(t) {
+  return { ...process.env, GH_HOST: t.origin };
+}
+
 // ---------- read the PR ----------
 
 /** Fetch what we need about the PR/MR: title, body, head/base shas, branch names, fetch ref. */
 export function fetchPR(t) {
   if (t.host === 'github') {
+    const env = ghEnv(t);
     const pr = json('gh', ['pr', 'view', String(t.number), '--repo', projectPath(t),
-      '--json', 'title,body,url,headRefOid,headRefName,baseRefName']);
-    const baseSha = text('gh', ['api', `repos/${projectPath(t)}/pulls/${t.number}`, '-q', '.base.sha']);
+      '--json', 'title,body,url,headRefOid,headRefName,baseRefName'], { env });
+    const baseSha = text('gh', ['api', `repos/${projectPath(t)}/pulls/${t.number}`, '-q', '.base.sha'], { env });
     return {
       title: pr.title,
       body: pr.body || '',
@@ -90,7 +120,7 @@ export function fetchPR(t) {
 export function alreadyReviewed(t, pr) {
   const marker = `<!-- debate-review head=${pr.head}`;
   if (t.host === 'github') {
-    const bodies = text('gh', ['api', `repos/${projectPath(t)}/pulls/${t.number}/reviews`, '--paginate', '-q', '.[].body']);
+    const bodies = text('gh', ['api', `repos/${projectPath(t)}/pulls/${t.number}/reviews`, '--paginate', '-q', '.[].body'], { env: ghEnv(t) });
     return bodies.includes(marker);
   }
   const notes = text('glab', ['api', `projects/${glabProject(t)}/merge_requests/${t.number}/notes?per_page=100`, '--paginate'], { env: glabEnv(t) });
@@ -106,7 +136,7 @@ export function fetchSpec(t, pr, commitsText) {
   for (const n of numbers) {
     try {
       if (t.host === 'github') {
-        const issue = json('gh', ['issue', 'view', n, '--repo', projectPath(t), '--json', 'title,body,url']);
+        const issue = json('gh', ['issue', 'view', n, '--repo', projectPath(t), '--json', 'title,body,url'], { env: ghEnv(t) });
         parts.push(`Issue #${n}: ${issue.title}\n${issue.url}\n${issue.body || ''}`);
       } else {
         const issue = json('glab', ['api', `projects/${glabProject(t)}/issues/${n}`], { env: glabEnv(t) });
@@ -145,7 +175,7 @@ function postGithub(t, pr, body, comments) {
     })),
   };
   const review = json('gh', ['api', '--method', 'POST', `repos/${projectPath(t)}/pulls/${t.number}/reviews`, '--input', '-'],
-    { input: JSON.stringify(payload) });
+    { input: JSON.stringify(payload), env: ghEnv(t) });
   return { reviewId: review.id, url: review.html_url };
 }
 
