@@ -314,6 +314,26 @@ test('snapshot overlay: core.autocrlf=true does not invent CRLF diffs', () => {
   });
 });
 
+test('snapshot overlay: clean filters on unchanged files do not invent diffs', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, '.gitattributes'), 'filtered.txt filter=upper\n');
+    fs.writeFileSync(path.join(dir, 'filtered.txt'), 'hello\n');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'old\n');
+    run('git', ['-C', dir, 'config', 'filter.upper.clean', 'tr a-z A-Z']);
+    run('git', ['-C', dir, 'config', 'filter.upper.smudge', 'tr A-Z a-z']);
+    commitAll(dir, 'filter');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'new\n');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      const changed = text('git', ['-C', snap.dir, 'diff', '--name-only', 'HEAD~1', 'HEAD']);
+      assert.equal(changed, 'dirty.txt');
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot overlay: core.symlinks=false does not invent type changes', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'target.txt'), 'target\n');

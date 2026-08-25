@@ -52,10 +52,34 @@ export function resolveBase(repoDir, override) {
   throw new Error('cannot resolve a base branch; pass --base');
 }
 
+function withoutIndexRefresh(opts = {}) {
+  return { ...opts, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', ...(opts.env || {}) } };
+}
+
 export function isClean(repoDir) {
-  return gitText(repoDir, ['status', '--porcelain', '--untracked-files=normal'], {
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
-  }) === '';
+  return gitText(repoDir, ['status', '--porcelain', '--untracked-files=normal'], withoutIndexRefresh()) === '';
+}
+
+/** Paths git itself treats as dirty, including every untracked file (`-uall`). Rename records yield both names. */
+function worktreeStatusPaths(repoDir) {
+  const raw = run(
+    'git',
+    ['-C', repoDir, 'status', '--porcelain', '-z', '--untracked-files=all'],
+    withoutIndexRefresh(),
+  ).stdout;
+  const tokens = (raw || '').split('\0');
+  const paths = new Set();
+  for (let i = 0; i < tokens.length; i++) {
+    const entry = tokens[i];
+    if (!entry || entry.length < 4 || entry[2] !== ' ') continue;
+    const code = entry.slice(0, 2);
+    paths.add(entry.slice(3));
+    if (code.includes('R') || code.includes('C')) {
+      i += 1;
+      if (tokens[i]) paths.add(tokens[i]);
+    }
+  }
+  return paths;
 }
 
 export function hasUnmerged(repoDir) {
@@ -284,6 +308,7 @@ function sourceHasSymlinkParent(repoDir, rel) {
 
 function overlay(repoDir, tmp) {
   const snapshot = snapshotPathSet(repoDir);
+  const dirty = worktreeStatusPaths(repoDir);
   const links = new Set([...gitlinksIn(repoDir), ...gitlinksIn(tmp)]);
   assertNoSpecialFiles(repoDir, links);
   if (links.size) log('submodule gitlinks are left at HEAD; dirty submodule trees are not in the snapshot');
@@ -296,10 +321,20 @@ function overlay(repoDir, tmp) {
     rmdirParentsNoFollow(tmp, rel);
   }
 
-  for (const rel of snapshot) {
+  // Recopying unchanged files would restage smudged/filter/mode bytes as phantom diffs.
+  for (const rel of dirty) {
     if (links.has(rel) || sourceHasSymlinkParent(repoDir, rel)) continue;
     placePath(repoDir, tmp, rel);
   }
+  return [...dirty].filter((rel) => {
+    if (links.has(rel) || sourceHasSymlinkParent(repoDir, rel)) return false;
+    try {
+      const st = fs.lstatSync(path.join(tmp, rel));
+      return !(st.isDirectory() && !st.isSymbolicLink());
+    } catch {
+      return cloneIndex.has(rel);
+    }
+  });
 }
 
 function branchTitle(repoDir) {
@@ -365,8 +400,12 @@ export function snapshotWorkingTree(repoDir, { keep = false, base } = {}) {
 
     let madeCommit = false;
     if (!isClean(repoDir)) {
-      overlay(repoDir, tmp);
-      isolatedGit(tmp, hooksDir, ['add', '-A']);
+      const staged = overlay(repoDir, tmp);
+      if (staged.length) {
+        isolatedGit(tmp, hooksDir, ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], {
+          input: `${staged.join('\0')}\0`,
+        });
+      }
       const cached = isolatedGit(tmp, hooksDir, ['diff', '--cached', '--quiet', 'HEAD', '--'], { allowFail: true });
       if (cached.status !== 0) {
         isolatedGit(tmp, hooksDir, [
