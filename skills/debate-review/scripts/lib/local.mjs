@@ -232,8 +232,11 @@ function assertNoSpecialFiles(repoDir, links) {
       let names;
       try {
         names = fs.readdirSync(abs);
-      } catch {
-        continue;
+      } catch (error) {
+        // A directory that vanished mid-walk is fine; an unreadable one would silently
+        // truncate the snapshot, so refuse rather than review incomplete code.
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+        throw new Error(`cannot read directory in the working tree: ${rel || '.'} (${error.code})`);
       }
       for (const name of names) {
         if (rel === '' && name === '.git') continue;
@@ -249,8 +252,9 @@ function assertNoSpecialFiles(repoDir, links) {
       let st;
       try {
         st = fs.lstatSync(abs);
-      } catch {
-        continue;
+      } catch (error) {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+        throw new Error(`cannot stat path in the working tree: ${rel} (${error.code})`);
       }
       if (isNestedGitDir(abs, st)) continue;
       if (isSpecialFile(st)) throw new Error(`cannot snapshot special file: ${rel}`);
@@ -338,11 +342,28 @@ function sourceIndexMode(repoDir, rel) {
   return null;
 }
 
+/** How the worktree presents a source-index gitlink. git reports a missing path as an unstaged
+    deletion and a file/symlink as an unstaged typechange, but treats any directory — populated,
+    dirty, or a plain (even nonempty) dir without .git — as a submodule worktree that stays clean. */
+function gitlinkWorktreeState(repoDir, rel) {
+  let st;
+  try {
+    st = fs.lstatSync(path.join(repoDir, rel));
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return 'missing';
+    throw new Error(`cannot stat path in the working tree: ${rel} (${error.code})`);
+  }
+  return st.isDirectory() && !st.isSymbolicLink() ? 'submodule' : 'replaced';
+}
+
 function overlay(repoDir, tmp, snapshot) {
   const dirty = worktreeStatusPaths(repoDir);
-  // Only source-index gitlinks exclude paths: a path that is a gitlink solely at HEAD (staged
-  // removal or typechange) must flow through normal staging so its replacement is snapshotted.
-  const links = new Set(gitlinkEntries(repoDir).keys());
+  // Only gitlinks whose worktree is still a submodule directory exclude paths from staging.
+  // Gitlinks that exist solely at HEAD (staged removal/typechange) or whose worktree was
+  // deleted or replaced by a file must flow through normal staging so the change is snapshotted.
+  const links = new Set(
+    [...gitlinkEntries(repoDir).keys()].filter((rel) => gitlinkWorktreeState(repoDir, rel) === 'submodule'),
+  );
   assertNoSpecialFiles(repoDir, links);
   if (links.size || gitlinkEntries(tmp).size) log('staged gitlink changes are in the snapshot; dirty submodule trees are not');
 
@@ -425,8 +446,16 @@ function syncGitlinks(repoDir, tmp, hooksDir) {
   const source = gitlinkEntries(repoDir);
   const clone = gitlinkEntries(tmp);
   for (const [rel, sha] of source) {
-    if (clone.get(rel) !== sha) {
-      isolatedGit(tmp, hooksDir, ['update-index', '--add', '--replace', '--cacheinfo', `160000,${sha},${rel}`]);
+    const state = gitlinkWorktreeState(repoDir, rel);
+    if (state === 'submodule') {
+      if (clone.get(rel) !== sha) {
+        isolatedGit(tmp, hooksDir, ['update-index', '--add', '--replace', '--cacheinfo', `160000,${sha},${rel}`]);
+      }
+      continue;
+    }
+    // missing → unstaged deletion; replaced → the overlay staged the disk file over the gitlink.
+    if (clone.has(rel)) {
+      isolatedGit(tmp, hooksDir, ['update-index', '--force-remove', '--', rel]);
     }
   }
   for (const rel of clone.keys()) {

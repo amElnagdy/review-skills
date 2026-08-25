@@ -484,6 +484,8 @@ test('snapshot overlay: gitlinks stay at user HEAD', () => {
     const sha = text('git', ['-C', dir, 'rev-parse', 'HEAD']);
     run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha},vendor/dep`]);
     run('git', ['-C', dir, 'commit', '-m', 'gitlink']);
+    // An empty directory marks the submodule as unpopulated; a missing one would be a deletion.
+    fs.mkdirSync(path.join(dir, 'vendor', 'dep'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
 
     const snap = snapshotWorkingTree(dir, { keep: false });
@@ -510,6 +512,9 @@ test('snapshot overlay: staged gitlink update, add, and removal reach the snapsh
     run('git', ['-C', dir, 'update-index', '--cacheinfo', `160000,${sha2},vendor/dep`]);
     run('git', ['-C', dir, 'rm', '--cached', 'vendor/gone']);
     run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha1},vendor/new`]);
+    // Unpopulated (empty) worktree dirs keep the surviving gitlinks clean.
+    fs.mkdirSync(path.join(dir, 'vendor', 'dep'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'vendor', 'new'), { recursive: true });
 
     const snap = snapshotWorkingTree(dir, { keep: false });
     try {
@@ -553,6 +558,7 @@ test('snapshot overlay: staged gitlink-to-file and file-to-gitlink type changes'
     run('git', ['-C', dir, 'rm', '--cached', 'sub']);
     fs.unlinkSync(path.join(dir, 'sub'));
     run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha},sub`]);
+    fs.mkdirSync(path.join(dir, 'sub'));
 
     const snap = snapshotWorkingTree(dir, { keep: false });
     try {
@@ -632,6 +638,140 @@ test('snapshot overlay: staged gitlink removal with a dirty submodule worktree o
       assert.notEqual(grep.status, 0);
     } finally {
       snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: unstaged submodule deletion is a deletion; an empty dir stays clean', () => {
+  const build = (dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const nested = path.join(dir, 'sub');
+    gitInit(nested, 'main');
+    fs.writeFileSync(path.join(nested, 'x'), 'x');
+    commitAll(nested, 'n1');
+    run('git', ['-C', dir, 'add', 'sub']);
+    run('git', ['-C', dir, 'commit', '-m', 'sub']);
+    fs.rmSync(path.join(dir, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
+  };
+
+  withRepo((dir) => {
+    build(dir);
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.doesNotMatch(text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']), /^sub$/m);
+    } finally {
+      snap.cleanup();
+    }
+  });
+
+  withRepo((dir) => {
+    build(dir);
+    fs.mkdirSync(path.join(dir, 'sub'));
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'sub']), /^160000 commit /);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: unstaged gitlink-to-file typechange snapshots the file', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const nested = path.join(dir, 'sub');
+    gitInit(nested, 'main');
+    fs.writeFileSync(path.join(nested, 'x'), 'x');
+    commitAll(nested, 'n1');
+    run('git', ['-C', dir, 'add', 'sub']);
+    run('git', ['-C', dir, 'commit', '-m', 'sub']);
+    fs.rmSync(path.join(dir, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'sub'), 'now-a-file');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'sub']), /^100644 blob /);
+      assert.equal(text('git', ['-C', snap.dir, 'show', 'HEAD:sub']), 'now-a-file');
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: a plain directory at a gitlink path stays a clean gitlink, like git status', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const nested = path.join(dir, 'sub');
+    gitInit(nested, 'main');
+    fs.writeFileSync(path.join(nested, 'x'), 'x');
+    commitAll(nested, 'n1');
+    const recorded = text('git', ['-C', nested, 'rev-parse', 'HEAD']);
+    run('git', ['-C', dir, 'add', 'sub']);
+    run('git', ['-C', dir, 'commit', '-m', 'sub']);
+    fs.rmSync(path.join(dir, 'sub'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'sub'));
+    fs.writeFileSync(path.join(dir, 'sub', 'plain.txt'), 'ordinary');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
+
+    // git reports this worktree state as clean for `sub`; the snapshot must agree.
+    assert.doesNotMatch(text('git', ['-C', dir, 'status', '--porcelain', '-uall']), /sub/);
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'sub']), new RegExp(`^160000 commit ${recorded}\\t`));
+      assert.doesNotMatch(text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']), /plain\.txt/);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot fails on an unreadable unignored directory instead of omitting it', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const locked = path.join(dir, 'locked');
+    fs.mkdirSync(locked);
+    fs.writeFileSync(path.join(locked, 'inner.txt'), 'hidden');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
+    fs.chmodSync(locked, 0o000);
+    let unreadable = false;
+    try {
+      fs.readdirSync(locked);
+    } catch {
+      unreadable = true;
+    }
+    try {
+      if (unreadable) {
+        assert.throws(() => snapshotWorkingTree(dir, { keep: false }), /cannot read directory/);
+      } else {
+        // root/admin bypasses permission bits; the failure mode cannot exist, so snapshotting must work
+        const snap = snapshotWorkingTree(dir, { keep: false });
+        snap.cleanup();
+      }
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+  });
+
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'junk/\n');
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const junk = path.join(dir, 'junk');
+    fs.mkdirSync(junk);
+    fs.writeFileSync(path.join(junk, 'x'), 'x');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
+    fs.chmodSync(junk, 0o000);
+    try {
+      const snap = snapshotWorkingTree(dir, { keep: false });
+      snap.cleanup();
+    } finally {
+      fs.chmodSync(junk, 0o755);
     }
   });
 });
