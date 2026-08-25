@@ -121,16 +121,16 @@ function assertWorkTree(repoDir) {
   if (head.status !== 0) throw new Error(`no commits in ${repoDir}`);
 }
 
-function gitlinksIn(repoDir) {
+function gitlinkEntries(repoDir) {
   const raw = run('git', ['-C', repoDir, 'ls-files', '-s', '-z']).stdout;
-  const set = new Set();
+  const map = new Map();
   for (const line of nulSplit(raw)) {
     if (line.startsWith('160000 ')) {
       const tab = line.indexOf('\t');
-      if (tab !== -1) set.add(line.slice(tab + 1));
+      if (tab !== -1) map.set(line.slice(tab + 1), line.slice(7, tab).split(' ')[0]);
     }
   }
-  return set;
+  return map;
 }
 
 function indexPaths(repoDir) {
@@ -338,9 +338,9 @@ function sourceIndexMode(repoDir, rel) {
 
 function overlay(repoDir, tmp, snapshot) {
   const dirty = worktreeStatusPaths(repoDir);
-  const links = new Set([...gitlinksIn(repoDir), ...gitlinksIn(tmp)]);
+  const links = new Set([...gitlinkEntries(repoDir).keys(), ...gitlinkEntries(tmp).keys()]);
   assertNoSpecialFiles(repoDir, links);
-  if (links.size) log('submodule gitlinks are left at HEAD; dirty submodule trees are not in the snapshot');
+  if (links.size) log('staged gitlink changes are in the snapshot; dirty submodule trees are not');
 
   const cloneIndex = indexPaths(tmp);
   const prune = [...cloneIndex].filter((p) => !links.has(p) && (!snapshot.has(p) || sourceHasSymlinkParent(repoDir, p)));
@@ -413,6 +413,24 @@ function stageDirtyPaths(repoDir, tmp, hooksDir, staged) {
   }
 }
 
+/** Superproject index changes to gitlinks (staged sha updates, adds, removals) are part of the
+    review diff; the overlay skips gitlink paths, so mirror the source index entries directly.
+    Dirty state inside a submodule worktree stays excluded because only the index is consulted. */
+function syncGitlinks(repoDir, tmp, hooksDir) {
+  const source = gitlinkEntries(repoDir);
+  const clone = gitlinkEntries(tmp);
+  for (const [rel, sha] of source) {
+    if (clone.get(rel) !== sha) {
+      isolatedGit(tmp, hooksDir, ['update-index', '--add', '--replace', '--cacheinfo', `160000,${sha},${rel}`]);
+    }
+  }
+  for (const rel of clone.keys()) {
+    if (!source.has(rel)) {
+      isolatedGit(tmp, hooksDir, ['update-index', '--force-remove', '--', rel]);
+    }
+  }
+}
+
 function branchTitle(repoDir) {
   const r = run('git', ['-C', repoDir, 'branch', '--show-current'], { allowFail: true });
   const name = (r.stdout || '').trim();
@@ -479,6 +497,7 @@ export function snapshotWorkingTree(repoDir, { keep = false, base } = {}) {
     if (!isClean(repoDir)) {
       const staged = overlay(repoDir, tmp, snapshotPaths);
       if (staged.length) stageDirtyPaths(repoDir, tmp, hooksDir, staged);
+      syncGitlinks(repoDir, tmp, hooksDir);
       const cached = isolatedGit(tmp, hooksDir, ['diff', '--cached', '--quiet', 'HEAD', '--'], { allowFail: true });
       if (cached.status !== 0) {
         isolatedGit(tmp, hooksDir, [

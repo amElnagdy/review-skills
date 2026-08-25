@@ -497,6 +497,62 @@ test('snapshot overlay: gitlinks stay at user HEAD', () => {
   });
 });
 
+test('snapshot overlay: staged gitlink update, add, and removal reach the snapshot', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const sha1 = text('git', ['-C', dir, 'rev-parse', 'HEAD']);
+    run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha1},vendor/dep`]);
+    run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha1},vendor/gone`]);
+    run('git', ['-C', dir, 'commit', '-m', 'gitlinks']);
+    const sha2 = text('git', ['-C', dir, 'rev-parse', 'HEAD']);
+
+    run('git', ['-C', dir, 'update-index', '--cacheinfo', `160000,${sha2},vendor/dep`]);
+    run('git', ['-C', dir, 'rm', '--cached', 'vendor/gone']);
+    run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha1},vendor/new`]);
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      const tree = text('git', ['-C', snap.dir, 'ls-tree', '-r', 'HEAD']);
+      assert.match(tree, new RegExp(`^160000 commit ${sha2}\\tvendor/dep$`, 'm'));
+      assert.match(tree, new RegExp(`^160000 commit ${sha1}\\tvendor/new$`, 'm'));
+      assert.doesNotMatch(tree, /vendor\/gone/);
+      assert.match(text('git', ['-C', dir, 'ls-tree', 'HEAD', 'vendor/gone']), /^160000 commit /);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: unstaged submodule commits stay at the recorded gitlink', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const nested = path.join(dir, 'vendor', 'dep');
+    gitInit(nested, 'main');
+    fs.writeFileSync(path.join(nested, 'x'), 'x');
+    commitAll(nested, 'n1');
+    const recorded = text('git', ['-C', nested, 'rev-parse', 'HEAD']);
+    run('git', ['-C', dir, 'add', 'vendor/dep']);
+    run('git', ['-C', dir, 'commit', '-m', 'sub']);
+
+    fs.writeFileSync(path.join(nested, 'x'), 'x2');
+    commitAll(nested, 'n2');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(
+        text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'vendor/dep']),
+        new RegExp(`^160000 commit ${recorded}\\t`),
+      );
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']), /^dirty\.txt$/m);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot overlay: gitlink working trees are not walked for special files', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'a'), 'a');
