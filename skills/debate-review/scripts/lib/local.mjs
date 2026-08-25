@@ -175,6 +175,8 @@ function assertNoSpecialFiles(repoDir) {
 }
 
 function placePath(repoDir, tmp, rel) {
+  if (sourceHasSymlinkParent(repoDir, rel)) return;
+
   const src = path.join(repoDir, rel);
   const dst = path.join(tmp, rel);
   let srcSt;
@@ -221,6 +223,23 @@ function placePath(repoDir, tmp, rel) {
   throw new Error(`cannot snapshot special file: ${rel}`);
 }
 
+/** lstat follows intermediate symlinks; skip stale index descendants under a replacement symlink. */
+function sourceHasSymlinkParent(repoDir, rel) {
+  const parts = rel.split(/[/\\]/).filter(Boolean);
+  let cur = repoDir;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = path.join(cur, parts[i]);
+    let st;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      return false;
+    }
+    if (st.isSymbolicLink()) return true;
+  }
+  return false;
+}
+
 function overlay(repoDir, tmp) {
   assertNoSpecialFiles(repoDir);
   const snapshot = snapshotPathSet(repoDir);
@@ -228,7 +247,7 @@ function overlay(repoDir, tmp) {
   if (links.size) log('submodule gitlinks are left at HEAD; dirty submodule trees are not in the snapshot');
 
   const cloneIndex = indexPaths(tmp);
-  const prune = [...cloneIndex].filter((p) => !snapshot.has(p) && !links.has(p));
+  const prune = [...cloneIndex].filter((p) => !links.has(p) && (!snapshot.has(p) || sourceHasSymlinkParent(repoDir, p)));
   prune.sort((a, b) => b.split('/').length - a.split('/').length || b.length - a.length);
   for (const rel of prune) {
     removeLeafNoFollow(path.join(tmp, rel));
@@ -236,7 +255,7 @@ function overlay(repoDir, tmp) {
   }
 
   for (const rel of snapshot) {
-    if (links.has(rel)) continue;
+    if (links.has(rel) || sourceHasSymlinkParent(repoDir, rel)) continue;
     placePath(repoDir, tmp, rel);
   }
 }

@@ -172,6 +172,36 @@ test('snapshot overlay: modified, deleted, git rm, untracked, gitignored', () =>
   });
 });
 
+test('snapshot overlay: directory at HEAD replaced by a symlink does not copy through it', () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-outside-dir-'));
+  try {
+    fs.writeFileSync(path.join(outside, 'b'), 'leaked');
+    fs.writeFileSync(path.join(outside, 'secret'), 'leaked');
+    withRepo((dir) => {
+      fs.mkdirSync(path.join(dir, 'a'));
+      fs.writeFileSync(path.join(dir, 'a', 'b'), 'inside');
+      commitAll(dir, 'dir');
+
+      fs.rmSync(path.join(dir, 'a'), { recursive: true });
+      fs.symlinkSync(outside, path.join(dir, 'a'));
+
+      const snap = snapshotWorkingTree(dir, { keep: false });
+      try {
+        const st = fs.lstatSync(path.join(snap.dir, 'a'));
+        assert.equal(st.isSymbolicLink(), true);
+        assert.match(text('git', ['-C', snap.dir, 'ls-files', '-s', 'a']), /^120000 /);
+        const tree = text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']);
+        assert.doesNotMatch(tree, /^a\/b$/m);
+        assert.doesNotMatch(tree, /^a\/secret$/m);
+      } finally {
+        snap.cleanup();
+      }
+    });
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test('snapshot overlay: symlink at HEAD replaced by a directory does not escape the clone', () => {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-outside-'));
   try {
