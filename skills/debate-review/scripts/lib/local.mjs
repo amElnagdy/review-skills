@@ -267,7 +267,7 @@ function placePath(repoDir, tmp, rel) {
 
 /** lstat follows intermediate symlinks; skip stale index descendants under a replacement symlink. */
 function sourceHasSymlinkParent(repoDir, rel) {
-  const parts = rel.split(/[/\\]/).filter(Boolean);
+  const parts = rel.split('/').filter(Boolean);
   let cur = repoDir;
   for (let i = 0; i < parts.length - 1; i++) {
     cur = path.join(cur, parts[i]);
@@ -355,9 +355,11 @@ export function snapshotWorkingTree(repoDir, { keep = false, base } = {}) {
     run('git', ['clone', '--local', '--no-checkout', repoDir, tmp], { env: isolatedEnv() });
     const hooksDir = path.join(tmp, '.git', 'debate-review-empty-hooks');
     fs.mkdirSync(hooksDir, { recursive: true });
-    const fileMode = run('git', ['-C', repoDir, 'config', '--bool', '--get', 'core.fileMode'], { allowFail: true });
-    if (fileMode.status === 0 && fileMode.stdout.trim() !== '') {
-      isolatedGit(tmp, hooksDir, ['config', 'core.fileMode', fileMode.stdout.trim()]);
+    for (const key of ['core.fileMode', 'core.autocrlf', 'core.symlinks']) {
+      const sourceSetting = run('git', ['-C', repoDir, 'config', '--get', key], { allowFail: true });
+      if (sourceSetting.status === 0 && sourceSetting.stdout.trim() !== '') {
+        isolatedGit(tmp, hooksDir, ['config', key, sourceSetting.stdout.trim()]);
+      }
     }
     isolatedGit(tmp, hooksDir, ['checkout', '--detach', '--quiet', userHead]);
 

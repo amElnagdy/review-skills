@@ -237,6 +237,27 @@ test('snapshot overlay: symlink at HEAD replaced by a directory does not escape 
   }
 });
 
+test('snapshot overlay: backslashes in Unix filenames are not path separators', { skip: process.platform === 'win32' }, () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'target'), 'target');
+    fs.symlinkSync('target', path.join(dir, 'a'));
+    fs.mkdirSync(path.join(dir, 'a\\b'));
+    fs.writeFileSync(path.join(dir, 'a\\b', 'f'), 'kept');
+    fs.writeFileSync(path.join(dir, 'dirty'), 'old');
+    commitAll(dir, 'backslash');
+    fs.writeFileSync(path.join(dir, 'dirty'), 'new');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.equal(fs.readFileSync(path.join(snap.dir, 'a\\b', 'f'), 'utf8'), 'kept');
+      const changed = text('git', ['-C', snap.dir, 'diff', '--name-only', 'HEAD~1', 'HEAD']);
+      assert.equal(changed, 'dirty');
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot overlay: mode-only +x is in the snapshot tree', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'tool.sh'), '#!/bin/sh\n');
@@ -269,6 +290,45 @@ test('snapshot overlay: core.fileMode=false does not invent mode-only diffs', ()
       const diff = text('git', ['-C', snap.dir, 'diff', 'HEAD~1', 'HEAD']);
       assert.doesNotMatch(diff, /mode change/);
       assert.match(diff, /dirty/);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: core.autocrlf=true does not invent CRLF diffs', () => {
+  withRepo((dir) => {
+    run('git', ['-C', dir, 'config', 'core.autocrlf', 'true']);
+    fs.writeFileSync(path.join(dir, 'same.txt'), 'same\r\n');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'old\r\n');
+    commitAll(dir, 'crlf');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'new\r\n');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      const changed = text('git', ['-C', snap.dir, 'diff', '--name-only', 'HEAD~1', 'HEAD']);
+      assert.equal(changed, 'dirty.txt');
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: core.symlinks=false does not invent type changes', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'target.txt'), 'target\n');
+    fs.symlinkSync('target.txt', path.join(dir, 'link'));
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'old\n');
+    commitAll(dir, 'symlink');
+    run('git', ['-C', dir, 'config', 'core.symlinks', 'false']);
+    fs.unlinkSync(path.join(dir, 'link'));
+    fs.writeFileSync(path.join(dir, 'link'), 'target.txt');
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'new\n');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      const changed = text('git', ['-C', snap.dir, 'diff', '--name-only', 'HEAD~1', 'HEAD']);
+      assert.equal(changed, 'dirty.txt');
     } finally {
       snap.cleanup();
     }
