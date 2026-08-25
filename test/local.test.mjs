@@ -314,6 +314,21 @@ test('snapshot overlay: core.autocrlf=true does not invent CRLF diffs', () => {
   });
 });
 
+test('snapshot overlay: nested untracked files are created parent-by-parent', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    fs.mkdirSync(path.join(dir, 'new', 'deep'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'new', 'deep', 'file.txt'), 'x');
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.equal(fs.readFileSync(path.join(snap.dir, 'new', 'deep', 'file.txt'), 'utf8'), 'x');
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot overlay: clean filters on unchanged files do not invent diffs', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, '.gitattributes'), 'filtered.txt filter=upper\n');
@@ -328,6 +343,24 @@ test('snapshot overlay: clean filters on unchanged files do not invent diffs', (
     try {
       const changed = text('git', ['-C', snap.dir, 'diff', '--name-only', 'HEAD~1', 'HEAD']);
       assert.equal(changed, 'dirty.txt');
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: dirty filtered files are staged with the source clean filter', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, '.gitattributes'), 'filtered.txt filter=upper\n');
+    fs.writeFileSync(path.join(dir, 'filtered.txt'), 'hello\n');
+    run('git', ['-C', dir, 'config', 'filter.upper.clean', 'tr a-z A-Z']);
+    run('git', ['-C', dir, 'config', 'filter.upper.smudge', 'tr A-Z a-z']);
+    commitAll(dir, 'filter');
+    fs.writeFileSync(path.join(dir, 'filtered.txt'), 'world\n');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.equal(text('git', ['-C', snap.dir, 'show', 'HEAD:filtered.txt']), 'WORLD');
     } finally {
       snap.cleanup();
     }

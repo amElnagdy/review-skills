@@ -136,10 +136,15 @@ function removeLeafNoFollow(abs) {
   else fs.unlinkSync(abs);
 }
 
+/** Git relative paths use `/` even on Windows; `path.sep` would collapse `new/deep`. */
+function gitParentParts(rel) {
+  const parts = rel.split('/').filter(Boolean);
+  parts.pop();
+  return parts;
+}
+
 function rmdirParentsNoFollow(root, rel) {
-  const dir = path.dirname(rel);
-  if (!dir || dir === '.') return;
-  const parts = dir.split(path.sep).filter(Boolean);
+  const parts = gitParentParts(rel);
   for (let i = parts.length; i > 0; i--) {
     const abs = path.join(root, ...parts.slice(0, i));
     if (abs === root) break;
@@ -157,9 +162,7 @@ function rmdirParentsNoFollow(root, rel) {
 }
 
 function mkdirParentsNoFollow(root, rel) {
-  const dir = path.dirname(rel);
-  if (!dir || dir === '.') return;
-  const parts = dir.split(path.sep).filter(Boolean);
+  const parts = gitParentParts(rel);
   let cur = root;
   for (const part of parts) {
     cur = path.join(cur, part);
@@ -337,6 +340,48 @@ function overlay(repoDir, tmp) {
   });
 }
 
+/** Hash through the source repo so clean filters/CRLF apply, but write the blob only into the clone. */
+function stageDirtyPaths(repoDir, tmp, hooksDir, staged) {
+  const leftover = [];
+  for (const rel of staged) {
+    const src = path.join(repoDir, rel);
+    let st;
+    try {
+      st = fs.lstatSync(src);
+    } catch {
+      leftover.push(rel);
+      continue;
+    }
+    if (!st.isFile()) {
+      leftover.push(rel);
+      continue;
+    }
+    const mode = (st.mode & 0o111) ? '100755' : '100644';
+    const sha = text('git', ['-C', repoDir, 'hash-object', '-w', '--path', rel, '--stdin'], {
+      env: {
+        ...process.env,
+        GIT_OBJECT_DIRECTORY: path.join(tmp, '.git', 'objects'),
+        GIT_OPTIONAL_LOCKS: '0',
+      },
+      input: fs.readFileSync(src),
+    });
+    const parts = rel.split('/').filter(Boolean);
+    for (let i = 1; i < parts.length; i++) {
+      const ancestor = parts.slice(0, i).join('/');
+      const listed = isolatedGit(tmp, hooksDir, ['ls-files', '-s', '--', ancestor], { allowFail: true }).stdout.trim();
+      if (listed.startsWith('120000 ') || listed.startsWith('160000 ')) {
+        isolatedGit(tmp, hooksDir, ['rm', '--cached', '-f', '--', ancestor]);
+      }
+    }
+    isolatedGit(tmp, hooksDir, ['update-index', '--add', '--cacheinfo', `${mode},${sha},${rel}`]);
+  }
+  if (leftover.length) {
+    isolatedGit(tmp, hooksDir, ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], {
+      input: `${leftover.join('\0')}\0`,
+    });
+  }
+}
+
 function branchTitle(repoDir) {
   const r = run('git', ['-C', repoDir, 'branch', '--show-current'], { allowFail: true });
   const name = (r.stdout || '').trim();
@@ -401,11 +446,7 @@ export function snapshotWorkingTree(repoDir, { keep = false, base } = {}) {
     let madeCommit = false;
     if (!isClean(repoDir)) {
       const staged = overlay(repoDir, tmp);
-      if (staged.length) {
-        isolatedGit(tmp, hooksDir, ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], {
-          input: `${staged.join('\0')}\0`,
-        });
-      }
+      if (staged.length) stageDirtyPaths(repoDir, tmp, hooksDir, staged);
       const cached = isolatedGit(tmp, hooksDir, ['diff', '--cached', '--quiet', 'HEAD', '--'], { allowFail: true });
       if (cached.status !== 0) {
         isolatedGit(tmp, hooksDir, [
