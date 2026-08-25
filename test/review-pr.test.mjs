@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseTarget, parseOrigin } from '../skills/debate-review/scripts/lib/forge.mjs';
@@ -63,6 +65,17 @@ test('review-pr: --local and --dry-run are separate jobs', () => {
   const dryNoUrl = spawn(['--dry-run']);
   assert.equal(dryNoUrl.status, 2);
   assert.match(dryNoUrl.stderr, /--local/);
+});
+
+test('review-pr: --local --repo-dir non-repo exits 1 after parsing', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const missing = path.join(os.tmpdir(), 'dr-not-a-repo-' + process.pid);
+  fs.rmSync(missing, { recursive: true, force: true });
+  fs.mkdirSync(missing);
+  const result = spawnSync('node', [script, '--local', '--repo-dir', missing], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not a git work tree/);
+  fs.rmSync(missing, { recursive: true, force: true });
 });
 
 test('validate: contract checks fail closed and fill missing verdicts', async () => {

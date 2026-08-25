@@ -6,7 +6,7 @@
 //   1. main reviewer   → findings
 //   2. debate reviewer → confirm / refute / downgrade each finding, add its own
 //   3. main reviewer   → final call (agreed / contested / withdrawn)
-//   4. post one review with inline comments (or print it with --dry-run)
+//   4. post one review with inline comments (or print it with --dry-run / --local)
 //
 // Shells out to git, gh|glab, and delegate-skills relays in --read-only. Never commits, never
 // edits the PR branch, never approves or requests changes.
@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { run, text, log } from './lib/shell.mjs';
+import { snapshotWorkingTree } from './lib/local.mjs';
 import { parseTarget, parseOrigin, projectPath, fetchPR, alreadyReviewed, fetchSpec, postReview } from './lib/forge.mjs';
 import { diffLineMap, anchor } from './lib/diff.mjs';
 import { resolveRole, dispatch, extractJson } from './lib/dispatch.mjs';
@@ -198,26 +199,73 @@ function findStandards(worktree) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
 
-  // --- what are we reviewing?
-  const target = parseTarget(opts.target, currentOrigin());
-  const pr = fetchPR(target);
-  log(`${projectPath(target)}#${target.number} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
+  let target = null;
+  let pr;
+  let clone;
+  let worktree;
+  let localSnapshot = null;
+  let repoDirForRoles;
+  const printOnly = Boolean(opts.local || opts.dryRun);
 
-  if (!opts.force && !opts.dryRun && alreadyReviewed(target, pr)) {
-    log('this head already has a debate-review; use --force to post another');
-    process.exit(3);
+  if (opts.local) {
+    repoDirForRoles = opts.repoDir
+      ? path.resolve(opts.repoDir)
+      : text('git', ['rev-parse', '--show-toplevel']);
+    localSnapshot = snapshotWorkingTree(repoDirForRoles, { keep: opts.keep, base: opts.base });
+    pr = localSnapshot.pr;
+    worktree = localSnapshot.dir;
+    clone = localSnapshot.dir;
+    log(`local ${path.basename(repoDirForRoles)} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
+  } else {
+    target = parseTarget(opts.target, currentOrigin());
+    pr = fetchPR(target);
+    log(`${projectPath(target)}#${target.number} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
+
+    if (!opts.force && !opts.dryRun && alreadyReviewed(target, pr)) {
+      log('this head already has a debate-review; use --force to post another');
+      process.exit(3);
+    }
+
+    clone = findClone(target, opts);
+    worktree = makeWorktree(clone, pr, pr.baseRef);
+    repoDirForRoles = clone;
   }
 
-  // --- check it out
-  const clone = findClone(target, opts);
-  const worktree = makeWorktree(clone, pr, pr.baseRef);
-  const baseRef = opts.base || pr.baseSha; // the forge's own base sha: still valid after merge
+  const baseRef = opts.local ? pr.baseSha : (opts.base || pr.baseSha);
 
-  const outDir = opts.outDir || path.join(os.homedir(), '.cache', 'debate-review',
-    `${target.owner.replace(/\//g, '__')}__${target.repo}`, String(target.number), pr.head.slice(0, 12));
+  const outDir = opts.outDir || (opts.local
+    ? path.join(
+      os.homedir(),
+      '.cache',
+      'debate-review',
+      'local',
+      path.basename(repoDirForRoles),
+      pr.headRef.replace(/\//g, '__'),
+      pr.head.slice(0, 12),
+    )
+    : path.join(
+      os.homedir(),
+      '.cache',
+      'debate-review',
+      `${target.owner.replace(/\//g, '__')}__${target.repo}`,
+      String(target.number),
+      pr.head.slice(0, 12),
+    ));
   fs.mkdirSync(outDir, { recursive: true });
 
-  const runLog = { schema: 'debate-review.run.v1', target, pr, outDir, startedAt: new Date().toISOString(), stages: {} };
+  const runLog = {
+    schema: 'debate-review.run.v1',
+    local: Boolean(opts.local),
+    repoDir: opts.local ? repoDirForRoles : undefined,
+    snapshotDir: opts.local ? localSnapshot.dir : undefined,
+    base: opts.local ? { name: pr.baseRef, sha: pr.baseSha } : undefined,
+    snapshotCommit: opts.local ? pr.head : undefined,
+    target,
+    pr,
+    outDir,
+    startedAt: new Date().toISOString(),
+    stages: {},
+  };
   const save = () => fs.writeFileSync(path.join(outDir, 'run.json'), JSON.stringify(runLog, null, 2));
 
   try {
@@ -227,8 +275,8 @@ async function main() {
     const lineMap = diffLineMap(diff);
 
     const who = {
-      main: resolveRole('main', { explicit: opts.main, lane: opts.mainLane, cwd: clone }),
-      debate: resolveRole('debate', { explicit: opts.debate, lane: opts.debateLane, cwd: clone }),
+      main: resolveRole('main', { explicit: opts.main, lane: opts.mainLane, cwd: repoDirForRoles }),
+      debate: resolveRole('debate', { explicit: opts.debate, lane: opts.debateLane, cwd: repoDirForRoles }),
     };
     runLog.who = who;
     save();
@@ -239,12 +287,15 @@ async function main() {
       PR_TITLE: pr.title,
       PR_BODY: pr.body.slice(0, 6000) || '(empty)',
     };
-    const send = (role, implementer, brief) => dispatch({ role, who: implementer, brief, cwd: worktree, outDir, timeout: opts.timeout });
+    const send = (role, implementer, brief) => dispatch({
+      role, who: implementer, brief, cwd: worktree, outDir, timeout: opts.timeout,
+    });
 
-    // --- 1. main review
+    const spec = opts.local ? 'none found, skip the Spec axis' : fetchSpec(target, pr, commits);
+
     const mainBrief = prompt('review-main.md', {
       ...common,
-      SPEC: fetchSpec(target, pr, commits),
+      SPEC: spec,
       STANDARDS: findStandards(worktree),
       SCHEMA_FINDINGS: schemaSection(1),
     });
@@ -255,7 +306,6 @@ async function main() {
     save();
     log(`main: ${findings.findings.length} finding(s) after the confidence filter`);
 
-    // --- 2. debate
     const debateBrief = prompt('review-debate.md', {
       ...common,
       FINDINGS_JSON: JSON.stringify(findings, null, 2),
@@ -268,7 +318,6 @@ async function main() {
     save();
     log(`debate: ${debate.verdicts.length} verdict(s), ${debate.new_findings.length} new finding(s) after the confidence filter`);
 
-    // --- 3. final call (skipped when there is nothing to argue about)
     let finalDoc;
     const nothingToDebate = findings.findings.length === 0 && debate.new_findings.length === 0;
     if (nothingToDebate) {
@@ -294,7 +343,6 @@ async function main() {
     for (const f of finalDoc.findings || []) if (!f.axis) f.axis = axisOf.get(f.id);
     save();
 
-    // --- 4. choose what to post and anchor it to the diff
     const toPost = (finalDoc.findings || []).filter(f =>
       f.status === 'agreed' || (f.status === 'contested' && opts.contested === 'post'));
 
@@ -316,14 +364,14 @@ async function main() {
     };
     save();
 
-    // --- 5. post or print
-    if (opts.dryRun) {
+    if (printOnly) {
+      const kind = opts.local ? 'local' : 'dry-run';
       process.stdout.write(`\n===== REVIEW BODY =====\n${body}\n`);
       for (const c of comments) {
         const range = c.start_line ? `${c.start_line}-${c.line}` : String(c.line);
         process.stdout.write(`\n===== ${c.path}:${range} =====\n${c.body}\n`);
       }
-      process.stdout.write(`\n(dry-run: nothing posted; artifacts in ${outDir})\n`);
+      process.stdout.write(`\n(${kind}: nothing posted; artifacts in ${outDir})\n`);
     } else {
       const result = postReview(target, pr, body, comments);
       runLog.postResult = result;
@@ -332,9 +380,13 @@ async function main() {
       process.stdout.write(`${result.url}\n`);
     }
   } finally {
-    if (!opts.keep) removeWorktree(clone, worktree);
+    if (opts.local) {
+      if (localSnapshot) localSnapshot.cleanup();
+    } else if (!opts.keep) {
+      removeWorktree(clone, worktree);
+    }
     runLog.finishedAt = new Date().toISOString();
-    save();
+    try { save(); } catch { /* snapshot cleanup may have already finished */ }
   }
 }
 
