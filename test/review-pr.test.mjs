@@ -20,6 +20,28 @@ test('parseTarget: github url, gitlab url, bare number via origin', () => {
   assert.throws(() => parseTarget('nope'));
 });
 
+test('parseTarget/parseOrigin: GitHub Enterprise hosts are github, not gitlab', () => {
+  const bin = path.join(ROOT, 'test/fixtures/forge/bin');
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}:${saved}`;
+  try {
+    // a GHE host cannot be recognised by name, so it is resolved by asking gh
+    assert.deepEqual(parseOrigin('https://ghe.example.com/acme/widget.git'),
+      { host: 'github', origin: 'ghe.example.com', owner: 'acme', repo: 'widget' });
+    assert.deepEqual(parseOrigin('git@ghe.example.com:acme/widget.git'),
+      { host: 'github', origin: 'ghe.example.com', owner: 'acme', repo: 'widget' });
+    assert.deepEqual(parseTarget('https://ghe.example.com/acme/widget/pull/5'),
+      { host: 'github', origin: 'ghe.example.com', owner: 'acme', repo: 'widget', number: 5 });
+    assert.deepEqual(parseTarget('5', 'https://ghe.example.com/acme/widget.git'),
+      { host: 'github', origin: 'ghe.example.com', owner: 'acme', repo: 'widget', number: 5 });
+    // a host gh does not know stays gitlab, and an MR url still wins on its own path
+    assert.equal(parseOrigin('https://git.example.com/grp/proj.git').host, 'gitlab');
+    assert.equal(parseTarget('https://git.example.com/grp/proj/-/merge_requests/7').host, 'gitlab');
+  } finally {
+    process.env.PATH = saved;
+  }
+});
+
 test('diffLineMap + anchor: context and added lines are commentable, removed are not', () => {
   const diff = [
     'diff --git a/x.py b/x.py', '--- a/x.py', '+++ b/x.py',

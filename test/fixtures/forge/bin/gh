@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake gh for the forge tests: logged in to ghe.example.com, nothing else.
+case "$*" in
+  "auth status --hostname ghe.example.com") exit 0 ;;
+  "auth status --hostname "*)               exit 1 ;;
+  *) echo "fake gh: unexpected call: $*" >&2; exit 1 ;;
+esac
