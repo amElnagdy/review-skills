@@ -40,6 +40,8 @@ test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) an
   assert.deepEqual(parseOrigin('git@ssh.dev.azure.com:v3/wscegy/Kultura/kultura-mobile'), expected);
   assert.deepEqual(parseOrigin('wscegy@vs-ssh.visualstudio.com:v3/wscegy/Kultura/kultura-mobile'), expected);
   assert.deepEqual(parseOrigin('ssh://wscegy@vs-ssh.visualstudio.com:22/v3/wscegy/Kultura/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('git@ssh.dev.azure.com:v3/wscegy/My%20Team/kultura-mobile'),
+    { ...expected, project: 'My Team', owner: 'wscegy/My Team' });
   assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/Kultura/_git/kultura-mobile'), expected);
   assert.deepEqual(parseTarget('1845', 'https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), { ...expected, number: 1845 });
   assert.equal(cloneUrl(expected), 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile');
@@ -82,26 +84,30 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.ok(spec.includes('Pagination & payment.'));
 
     const result = postReview(t, pr, 'summary body', [
-      { path: 'lib/a.dart', line: 12, body: '<!-- debate-review:F1 status=agreed -->\none' },
-      { path: 'lib/b.dart', line: 40, start_line: 38, body: '<!-- debate-review:F2 status=agreed -->\ntwo' },
+      { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=agreed -->\none' },
+      { path: 'lib/b.dart', line: 40, start_line: 38, claim: 'two', body: '<!-- debate-review:F2 status=agreed -->\ntwo' },
+      { path: 'lib/missing.dart', line: 8, claim: 'three', body: '<!-- debate-review:F3 status=agreed -->\nthree' },
     ]);
-    assert.equal(result.threadIds.length, 2);
+    assert.equal(result.threadIds.length, 3);
     assert.equal(result.threadIds[0], 7020);              // existing F1 thread was reused
     assert.equal(result.url, pr.url);
 
     const posted = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
-    assert.equal(posted.length, 2);                       // existing F1 skipped; F2 then summary
+    assert.equal(posted.length, 3);                       // existing F1 skipped; F2, F3, then summary
     assert.equal(posted[0].threadContext.filePath, '/lib/b.dart');
     assert.deepEqual(posted[0].threadContext.rightFileStart, { line: 38, offset: 1 });
     assert.deepEqual(posted[0].threadContext.rightFileEnd, { line: 40, offset: 1 });
-    assert.match(posted[0].comments[0].content, /^<!-- debate-review:F2 head=49793f1f/);
+    assert.match(posted[0].comments[0].content,
+      /^<!-- debate-review finding=[0-9a-f]{16} head=49793f1f/);
     assert.deepEqual(posted[0].pullRequestThreadContext, {
       changeTrackingId: 12,
       iterationContext: { firstComparingIteration: 3, secondComparingIteration: 3 },
     });
-    assert.equal(posted[1].threadContext, undefined);     // the summary is not anchored to a file
-    assert.equal(posted[1].comments[0].content, 'summary body');
-    assert.equal(posted[1].status, 'closed');
+    assert.equal(posted[1].threadContext.filePath, '/lib/missing.dart');
+    assert.equal(posted[1].pullRequestThreadContext, undefined);
+    assert.equal(posted[2].threadContext, undefined);     // the summary is not anchored to a file
+    assert.equal(posted[2].comments[0].content, 'summary body');
+    assert.equal(posted[2].status, 'closed');
   } finally {
     for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
     fs.rmSync(path.dirname(log), { recursive: true, force: true });

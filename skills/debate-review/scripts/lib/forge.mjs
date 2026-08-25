@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { run, text, json } from './shell.mjs';
 
 // Azure DevOps: the token audience `az rest` needs, and the API version every call is pinned to.
@@ -77,7 +78,7 @@ function azureOrigin(origin, segments) {
   if (origin === 'ssh.dev.azure.com' || origin === 'vs-ssh.visualstudio.com') {
     // v3/<org>/<project>/<repo>
     if (segments[0] !== 'v3' || segments.length < 4) return null;
-    return azureTarget(segments[1], segments[2], segments[3]);
+    return azureTarget(...segments.slice(1, 4).map(decodeURIComponent));
   }
 
   if (origin === 'dev.azure.com') {
@@ -216,7 +217,7 @@ export function fetchPR(t) {
     }
     const head = pr.lastMergeSourceCommit.commitId;
     const iterations = azureRest(azureRepoApi(t, `/pullRequests/${t.number}/iterations?includeCommits=true`));
-    const iteration = (iterations.value || []).find(entry => entry.sourceRefCommit?.commitId === head);
+    const iteration = (iterations.value || []).filter(entry => entry.sourceRefCommit?.commitId === head).at(-1);
     if (!iteration) throw new Error(`Azure DevOps has no PR iteration for reviewed head ${head}`);
     return {
       title: pr.title,
@@ -370,17 +371,17 @@ function postGitlab(t, pr, body, comments) {
 function postAzure(t, pr, body, comments) {
   const url = azureRepoApi(t, `/pullRequests/${t.number}/threads`);
   const existingThreads = comments.length ? azureRest(url).value || [] : [];
-  const changes = comments.length
-    ? azureRest(azureRepoApi(t,
-      `/pullRequests/${t.number}/iterations/${pr.iterationId}/changes?$top=2000`)).changeEntries || []
-    : [];
+  const changes = comments.length ? azureIterationChanges(t, pr) : [];
   const changeIds = new Map(changes.map(change => [change.item?.path, change.changeTrackingId]));
   const threadIds = [];
 
   for (const c of comments) {
-    const findingId = String(c.body).match(/^<!-- debate-review:([^\s]+)/)?.[1];
-    if (!findingId) throw new Error('Azure inline comment is missing its debate-review finding marker');
-    const marker = `<!-- debate-review:${findingId} head=${pr.head} -->`;
+    if (!c.claim) throw new Error('Azure inline comment is missing its finding claim');
+    const filePath = c.path.startsWith('/') ? c.path : `/${c.path}`;
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify([filePath, c.start_line || c.line, c.line, c.claim]))
+      .digest('hex').slice(0, 16);
+    const marker = `<!-- debate-review finding=${fingerprint} head=${pr.head} -->`;
     const existing = existingThreads.find(thread =>
       thread.comments?.some(comment => String(comment.content).includes(marker)));
     if (existing) {
@@ -388,11 +389,7 @@ function postAzure(t, pr, body, comments) {
       continue;
     }
 
-    const filePath = c.path.startsWith('/') ? c.path : `/${c.path}`;
     const changeTrackingId = changeIds.get(filePath);
-    if (changeTrackingId === undefined) {
-      throw new Error(`Azure DevOps returned no changeTrackingId for ${filePath} in iteration ${pr.iterationId}`);
-    }
     const thread = azureRest(url, {
       method: 'POST',
       body: {
@@ -403,13 +400,15 @@ function postAzure(t, pr, body, comments) {
           rightFileStart: { line: c.start_line || c.line, offset: 1 },
           rightFileEnd: { line: c.line, offset: 1 },
         },
-        pullRequestThreadContext: {
-          changeTrackingId,
-          iterationContext: {
-            firstComparingIteration: pr.iterationId,
-            secondComparingIteration: pr.iterationId,
+        ...(changeTrackingId === undefined ? {} : {
+          pullRequestThreadContext: {
+            changeTrackingId,
+            iterationContext: {
+              firstComparingIteration: pr.iterationId,
+              secondComparingIteration: pr.iterationId,
+            },
           },
-        },
+        }),
       },
     });
     threadIds.push(thread.id);
@@ -420,4 +419,16 @@ function postAzure(t, pr, body, comments) {
     body: { comments: [{ parentCommentId: 0, content: body, commentType: 'text' }], status: 'closed' },
   });
   return { summaryThreadId: summary.id, threadIds, url: pr.url };
+}
+
+function azureIterationChanges(t, pr) {
+  const entries = [];
+  let skip = 0;
+  do {
+    const page = azureRest(azureRepoApi(t,
+      `/pullRequests/${t.number}/iterations/${pr.iterationId}/changes?$top=2000&$skip=${skip}`));
+    entries.push(...(page.changeEntries || []));
+    skip = page.nextSkip || 0;
+  } while (skip > 0);
+  return entries;
 }

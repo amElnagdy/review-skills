@@ -375,7 +375,7 @@ async function main() {
       if (!a) { unanchored.push(f); continue; }
       let body = renderInline(f);
       if (a.snapped) body += `\n_(anchored to the nearest diff line; the finding named ${f.line_start}-${f.line_end})_\n`;
-      comments.push({ ...a, body });
+      comments.push({ ...a, body, claim: f.claim });
     }
     const body = renderBody({ who, finalDoc, posted: toPost, unanchored });
 

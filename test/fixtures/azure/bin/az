@@ -31,6 +31,7 @@ fi
 
 case "$url" in
   *"/pullRequests/1845/threads?"*) cat "$F/threads.json" ;;
+  *"/pullRequests/1845/iterations/3/changes?"*'$skip=2'*) cat "$F/changes-page-2.json" ;;
   *"/pullRequests/1845/iterations/3/changes?"*) cat "$F/changes.json" ;;
   *"/pullRequests/1845/iterations?"*) cat "$F/iterations.json" ;;
   *"/pullRequests/1845?"*)         cat "$F/pr.json" ;;
