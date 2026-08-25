@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // debate-review · review-pr.mjs
 //
-// Review a GitHub PR / GitLab MR with two implementers that debate, then post one review.
+// Review a GitHub PR / GitLab MR / Azure DevOps PR with two implementers that debate, then post one review.
 //
 //   1. main reviewer   → findings
 //   2. debate reviewer → confirm / refute / downgrade each finding, add its own
 //   3. main reviewer   → final call (agreed / contested / withdrawn)
 //   4. post one review with inline comments (or print it with --dry-run)
 //
-// Shells out to git, gh|glab, and delegate-skills relays in --read-only. Never commits, never
+// Shells out to git, gh|glab|az, and delegate-skills relays in --read-only. Never commits, never
 // edits the PR branch, never approves or requests changes.
 
 import fs from 'node:fs';
@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { run, text, log } from './lib/shell.mjs';
-import { parseTarget, parseOrigin, projectPath, fetchPR, alreadyReviewed, fetchSpec, postReview } from './lib/forge.mjs';
+import { parseTarget, parseOrigin, projectPath, cloneUrl, fetchPR, alreadyReviewed, fetchSpec, postReview } from './lib/forge.mjs';
 import { diffLineMap, anchor } from './lib/diff.mjs';
 import { resolveRole, dispatch, extractJson } from './lib/dispatch.mjs';
 import { validateFindings, validateDebate, validateFinal } from './lib/validate.mjs';
@@ -29,6 +29,12 @@ const HELP = `debate-review · review-pr.mjs
 
 Usage:
   node review-pr.mjs <pr-url | number> [options]
+
+Targets:
+  GitHub        https://github.com/<owner>/<repo>/pull/<n>
+  GitLab        https://<host>/<group>/<repo>/-/merge_requests/<n>
+  Azure DevOps  https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<n>
+  <n>           resolved against the origin of the current clone
 
 Options:
   --main <implementer>      Main reviewer (claude|codex|cursor|grok|opencode|pi…). Default: the lane.
@@ -128,21 +134,32 @@ function findClone(target, opts) {
   const cache = path.join(os.homedir(), '.cache', 'debate-review', 'clones', `${target.owner.replace(/\//g, '__')}__${target.repo}`);
   if (!fs.existsSync(cache)) {
     log(`cloning ${projectPath(target)} into ${cache}`);
-    const url = `https://${target.origin}/${projectPath(target)}.git`;
-    run('git', ['clone', '--filter=blob:none', url, cache], { stdio: ['ignore', 'ignore', 'inherit'] });
+    run('git', ['clone', '--filter=blob:none', cloneUrl(target), cache], { stdio: ['ignore', 'ignore', 'inherit'] });
   }
   return cache;
 }
 
 /** Fetch the PR head + base and check the head out in a throwaway worktree. */
 function makeWorktree(clone, pr, baseBranch) {
-  run('git', ['-C', clone, 'fetch', '--quiet', 'origin', pr.fetchRef]);
+  fetchHead(clone, pr);
   run('git', ['-C', clone, 'fetch', '--quiet', 'origin', baseBranch]);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-'));
   fs.rmSync(dir, { recursive: true, force: true }); // git wants to create it
   run('git', ['-C', clone, 'worktree', 'add', '--detach', '--quiet', dir, pr.head]);
   return dir;
+}
+
+/**
+ * Fetch the ref that carries the PR head. Azure DevOps also reports a fallback: its merge ref only
+ * exists once the merge has been computed, and a conflicted PR has none.
+ */
+function fetchHead(clone, pr) {
+  const first = run('git', ['-C', clone, 'fetch', '--quiet', 'origin', pr.fetchRef], { allowFail: true });
+  if (first.status === 0) return;
+  if (!pr.fetchRefAlt) throw new Error(`cannot fetch ${pr.fetchRef}\n${first.stderr}`);
+  log(`${pr.fetchRef} is not available, falling back to ${pr.fetchRefAlt}`);
+  run('git', ['-C', clone, 'fetch', '--quiet', 'origin', pr.fetchRefAlt]);
 }
 
 function removeWorktree(clone, dir) {

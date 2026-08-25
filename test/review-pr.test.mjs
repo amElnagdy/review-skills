@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { parseTarget, parseOrigin } from '../skills/debate-review/scripts/lib/forge.mjs';
+import { parseTarget, parseOrigin, cloneUrl, fetchPR, alreadyReviewed, fetchSpec, postReview } from '../skills/debate-review/scripts/lib/forge.mjs';
 import { diffLineMap, anchor } from '../skills/debate-review/scripts/lib/diff.mjs';
 import { extractJson, expectSchema } from '../skills/debate-review/scripts/lib/dispatch.mjs';
 
@@ -18,6 +20,80 @@ test('parseTarget: github url, gitlab url, bare number via origin', () => {
     { host: 'github', origin: 'github.com', owner: 'amElnagdy', repo: 'togi-app', number: 12 });
   assert.equal(parseOrigin('https://gitlab.com/a/b/c.git').owner, 'a/b');
   assert.throws(() => parseTarget('nope'));
+});
+
+test('parseTarget: azure devops urls, with and without the project segment', () => {
+  const full = { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'Kultura', owner: 'wscegy/Kultura', repo: 'kultura-mobile', number: 1845 };
+  assert.deepEqual(parseTarget('https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845'), full);
+  assert.deepEqual(parseTarget('https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullRequest/1845?_a=files'), full);
+  // project omitted in the url: Azure DevOps means "the project named like the repo"
+  assert.deepEqual(parseTarget('https://dev.azure.com/wscegy/_git/tools/pullrequest/9'),
+    { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'tools', owner: 'wscegy/tools', repo: 'tools', number: 9 });
+  // legacy host, and a project name that had to be percent-encoded
+  assert.deepEqual(parseTarget('https://wscegy.visualstudio.com/My%20Team/_git/app/pullrequest/3'),
+    { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'My Team', owner: 'wscegy/My Team', repo: 'app', number: 3 });
+});
+
+test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) and the clone url', () => {
+  const expected = { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'Kultura', owner: 'wscegy/Kultura', repo: 'kultura-mobile' };
+  assert.deepEqual(parseOrigin('https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('git@ssh.dev.azure.com:v3/wscegy/Kultura/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/Kultura/_git/kultura-mobile'), expected);
+  assert.deepEqual(parseTarget('1845', 'https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), { ...expected, number: 1845 });
+  assert.equal(cloneUrl(expected), 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile');
+  assert.equal(cloneUrl({ host: 'github', origin: 'github.com', owner: 'a', repo: 'b' }), 'https://github.com/a/b.git');
+  // a github remote must not be read as azure just because it has userinfo
+  assert.equal(parseOrigin('https://token@github.com/a/b.git').host, 'github');
+});
+
+test('azure: read the pr, spot an existing review, post threads (fake az)', () => {
+  const FIXTURES = path.join(ROOT, 'test/fixtures');
+  const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-test-')), 'posted.ndjson');
+  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG };
+  process.env.PATH = `${path.join(FIXTURES, 'azure/bin')}:${process.env.PATH}`;
+  process.env.FIXTURES = FIXTURES;
+  process.env.AZ_LOG = log;
+
+  try {
+    const t = parseTarget('https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845');
+    const pr = fetchPR(t);
+    assert.equal(pr.head, '49793f1fec6cd58262e25752b79be791c68eb474');
+    assert.equal(pr.baseSha, '459026c8ad84bc296a0b44d5c3c1e4bbbbe81592');
+    assert.deepEqual([pr.headRef, pr.baseRef], ['test/TEST-001-revenue-path-coverage', 'dev']);
+    assert.deepEqual([pr.fetchRef, pr.fetchRefAlt], ['refs/pull/1845/merge', 'test/TEST-001-revenue-path-coverage']);
+    assert.equal(pr.url, 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845');
+
+    // the fixture carries a marker for a different head sha
+    assert.equal(alreadyReviewed(t, pr), false);
+    assert.equal(alreadyReviewed(t, { head: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' }), true);
+
+    // "#4907" is a work item on azure, and its html description is flattened
+    const spec = fetchSpec(t, pr, '');
+    assert.ok(spec.includes('Work item #4907: TEST-001 revenue path coverage'));
+    assert.ok(spec.includes('Cover the revenue path.') && !spec.includes('<b>'));
+    assert.ok(spec.includes('Pagination & payment.'));
+
+    const result = postReview(t, pr, 'summary body', [
+      { path: 'lib/a.dart', line: 12, body: 'one' },
+      { path: 'lib/b.dart', line: 40, start_line: 38, body: 'two' },
+    ]);
+    assert.equal(result.threadIds.length, 2);
+    assert.equal(result.url, pr.url);
+
+    const posted = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    assert.equal(posted.length, 3);                       // 2 inline + 1 summary, in that order
+    assert.equal(posted[0].threadContext.filePath, '/lib/a.dart');   // azure wants a rooted path
+    assert.deepEqual(posted[0].threadContext.rightFileStart, { line: 12, offset: 1 });
+    assert.deepEqual(posted[0].threadContext.rightFileEnd, { line: 12, offset: 1 });
+    assert.deepEqual(posted[1].threadContext.rightFileStart, { line: 38, offset: 1 });
+    assert.deepEqual(posted[1].threadContext.rightFileEnd, { line: 40, offset: 1 });
+    assert.equal(posted[2].threadContext, undefined);     // the summary is not anchored to a file
+    assert.equal(posted[2].comments[0].content, 'summary body');
+    assert.equal(posted[2].status, 'active');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+    fs.rmSync(path.dirname(log), { recursive: true, force: true });
+  }
 });
 
 test('diffLineMap + anchor: context and added lines are commentable, removed are not', () => {

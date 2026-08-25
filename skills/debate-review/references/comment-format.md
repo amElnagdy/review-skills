@@ -14,8 +14,8 @@ Severity is shown on the PR as a level, computed by the script from the contract
 | P1 | any other blocking finding | `[!WARNING]` (yellow) |
 | P2 | non-blocking | `[!NOTE]` (blue) |
 
-GitHub and GitLab (17.10+) render those alert blockquotes with colour; anything else shows a plain
-quote, which still reads.
+GitHub and GitLab (17.10+) render those alert blockquotes with colour; anything else, Azure DevOps
+included, shows a plain quote, which still reads.
 
 ## Review body
 
