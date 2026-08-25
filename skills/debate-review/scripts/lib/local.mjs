@@ -353,6 +353,10 @@ export function snapshotWorkingTree(repoDir, { keep = false, base } = {}) {
     run('git', ['clone', '--local', '--no-checkout', repoDir, tmp], { env: isolatedEnv() });
     const hooksDir = path.join(tmp, '.git', 'debate-review-empty-hooks');
     fs.mkdirSync(hooksDir, { recursive: true });
+    const fileMode = run('git', ['-C', repoDir, 'config', '--bool', '--get', 'core.fileMode'], { allowFail: true });
+    if (fileMode.status === 0 && fileMode.stdout.trim() !== '') {
+      isolatedGit(tmp, hooksDir, ['config', 'core.fileMode', fileMode.stdout.trim()]);
+    }
     isolatedGit(tmp, hooksDir, ['checkout', '--detach', '--quiet', userHead]);
 
     let madeCommit = false;

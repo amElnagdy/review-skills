@@ -253,6 +253,28 @@ test('snapshot overlay: mode-only +x is in the snapshot tree', () => {
   });
 });
 
+test('snapshot overlay: core.fileMode=false does not invent mode-only diffs', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'tool.sh'), '#!/bin/sh\n');
+    fs.writeFileSync(path.join(dir, 'a'), 'a\n');
+    commitAll(dir, 'mode');
+    run('git', ['-C', dir, 'config', 'core.fileMode', 'false']);
+    fs.chmodSync(path.join(dir, 'tool.sh'), 0o755);
+    fs.writeFileSync(path.join(dir, 'a'), 'dirty\n');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      const stage = text('git', ['-C', snap.dir, 'ls-files', '-s', 'tool.sh']);
+      assert.match(stage, /^100644 /);
+      const diff = text('git', ['-C', snap.dir, 'diff', 'HEAD~1', 'HEAD']);
+      assert.doesNotMatch(diff, /mode change/);
+      assert.match(diff, /dirty/);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot overlay: gitlinks stay at user HEAD', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'a'), 'a');
