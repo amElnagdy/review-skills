@@ -81,10 +81,9 @@ test('review-pr: --local --repo-dir non-repo exits 1 after parsing', () => {
 test('review-pr: --local removes the snapshot if --out-dir cannot be created', () => {
   const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-src-'));
-  const blocked = path.join(os.tmpdir(), 'dr-out-file-' + process.pid);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-tmp-'));
+  const blocked = path.join(tmp, 'out-is-a-file');
   fs.writeFileSync(blocked, 'not-a-dir');
-  const listed = () => fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('debate-review-local-'));
-  const before = new Set(listed());
   try {
     spawnSync('git', ['init', '-b', 'main', dir], { encoding: 'utf8' });
     spawnSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
@@ -93,13 +92,16 @@ test('review-pr: --local removes the snapshot if --out-dir cannot be created', (
     fs.writeFileSync(path.join(dir, 'a'), 'a');
     spawnSync('git', ['-C', dir, 'add', '-A']);
     spawnSync('git', ['-C', dir, 'commit', '-m', 'a']);
-    const result = spawnSync('node', [script, '--local', '--repo-dir', dir, '--out-dir', blocked], { encoding: 'utf8' });
+    const result = spawnSync('node', [script, '--local', '--repo-dir', dir, '--out-dir', blocked], {
+      encoding: 'utf8',
+      env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp },
+    });
     assert.equal(result.status, 1);
-    const leftover = listed().filter((n) => !before.has(n));
+    const leftover = fs.readdirSync(tmp).filter((n) => n.startsWith('debate-review-local-'));
     assert.deepEqual(leftover, []);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
-    fs.rmSync(blocked, { force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 

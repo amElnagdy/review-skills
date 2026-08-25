@@ -53,7 +53,7 @@ export function resolveBase(repoDir, override) {
 }
 
 export function isClean(repoDir) {
-  return gitText(repoDir, ['status', '--porcelain']) === '';
+  return gitText(repoDir, ['status', '--porcelain', '--untracked-files=normal']) === '';
 }
 
 export function hasUnmerged(repoDir) {
@@ -162,9 +162,9 @@ function isGitIgnored(repoDir, rel) {
 /** Git does not list fifos/sockets, so ls-files will not reach placePath for them. */
 function assertNoSpecialFiles(repoDir) {
   const walk = (abs, rel) => {
+    if (rel && isGitIgnored(repoDir, rel)) return;
     const st = fs.lstatSync(abs);
     if (isSpecialFile(st)) {
-      if (rel && isGitIgnored(repoDir, rel)) return;
       throw new Error(`cannot snapshot special file: ${rel || abs}`);
     }
     if (!st.isDirectory() || st.isSymbolicLink()) return;

@@ -113,6 +113,10 @@ test('hasUnmerged / hasHiddenIndexBits / isClean', () => {
     run('git', ['-C', dir, 'update-index', '--skip-worktree', 'a']);
     assert.equal(hasHiddenIndexBits(dir), true);
     run('git', ['-C', dir, 'update-index', '--no-skip-worktree', 'a']);
+
+    run('git', ['-C', dir, 'config', 'status.showUntrackedFiles', 'no']);
+    fs.writeFileSync(path.join(dir, 'fresh.txt'), 'fresh');
+    assert.equal(isClean(dir), false);
   });
 });
 
@@ -290,6 +294,19 @@ test('snapshot refuses conflicted and hidden-bit worktrees', () => {
     commitAll(dir, 'a');
     run('git', ['-C', dir, 'update-index', '--skip-worktree', 'a']);
     assert.throws(() => snapshotWorkingTree(dir, { keep: false }), /skip-worktree|assume-unchanged/);
+  });
+});
+
+test('snapshot overlay: ignored directories are not walked for special files', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'junk/\n');
+    commitAll(dir, 'base');
+    fs.mkdirSync(path.join(dir, 'junk'));
+    run('mkfifo', [path.join(dir, 'junk', 'pipe')]);
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    snap.cleanup();
   });
 });
 
