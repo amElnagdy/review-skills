@@ -28,25 +28,27 @@ const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const HELP = `debate-review · review-pr.mjs
 
 Usage:
-  node review-pr.mjs <pr-url | number> [options]
+  node review-pr.mjs --local [--base <ref>] [--repo-dir <dir>] [options]
+  node review-pr.mjs <pr-url | number> [--dry-run] [options]
 
 Options:
+  --local                   Review the working tree. No GitHub/GitLab. Prints the review.
   --main <implementer>      Main reviewer (claude|codex|cursor|grok|opencode|pi…). Default: the lane.
   --debate <implementer>    Debate reviewer. Default: the lane.
   --main-lane <name>        Fleet lane for main (default: review-main).
   --debate-lane <name>      Fleet lane for debate (default: review-debate).
   --contested post|drop     Findings debate refuted but main kept (default: post, tagged).
   --min-confidence <0-1>    Drop findings (main F* and debate D*) below this confidence (default: 0.5).
-  --base <ref>              Base override (default: the PR's base sha from the forge).
-  --repo-dir <dir>          Local clone to use (default: cwd if its origin matches, else a cache clone).
-  --out-dir <dir>           Artifacts (default: ~/.cache/debate-review/<owner>__<repo>/<N>/<head>).
+  --base <ref>              Base override (PR: forge base sha; --local: origin/HEAD, else main, else master).
+  --repo-dir <dir>          Local clone (PR) or the working tree to snapshot (--local). Default: cwd.
+  --out-dir <dir>           Artifacts (default: ~/.cache/debate-review/… ).
   --timeout <dur>           Per-implementer relay watchdog (default: 30m).
-  --dry-run                 Print the review instead of posting.
+  --dry-run                 Print a live PR review instead of posting. Does not combine with --local.
   --force                   Post even if this head sha already has a debate-review.
-  --keep                    Keep the temporary worktree.
+  --keep                    Keep the temporary worktree (PR) or snapshot clone (--local).
   --help
 
-Exit codes: 0 posted/dry-run · 1 failure · 2 usage · 3 head already reviewed (use --force)
+Exit codes: 0 posted/printed · 1 failure · 2 usage · 3 head already reviewed (use --force)
 `;
 
 // ============================================================ args
@@ -80,17 +82,27 @@ function parseArgs(argv) {
     else if (arg === '--out-dir') opts.outDir = value();
     else if (arg === '--timeout') opts.timeout = value();
     else if (arg === '--dry-run') opts.dryRun = true;
+    else if (arg === '--local') opts.local = true;
     else if (arg === '--force') opts.force = true;
     else if (arg === '--keep') opts.keep = true;
     else if (arg.startsWith('--')) fail(2, `unknown option ${arg}`);
     else positional.push(arg);
   }
 
-  if (positional.length !== 1) fail(2, HELP);
+  if (opts.local && opts.dryRun) {
+    fail(2, '--local and --dry-run do not combine; --local prints a working tree, --dry-run prints a live PR');
+  }
+  if (opts.local && positional.length !== 0) {
+    fail(2, '--local does not take a PR URL; drop the URL or use --dry-run');
+  }
+  if (!opts.local && opts.dryRun && positional.length !== 1) {
+    fail(2, '--dry-run needs a PR URL; for a working tree use --local');
+  }
+  if (!opts.local && positional.length !== 1) fail(2, HELP);
   if (!['post', 'drop'].includes(opts.contested)) fail(2, '--contested must be post or drop');
   if (!(opts.minConfidence >= 0 && opts.minConfidence <= 1)) fail(2, '--min-confidence must be 0..1');
 
-  opts.target = positional[0];
+  if (!opts.local) opts.target = positional[0];
   return opts;
 }
 

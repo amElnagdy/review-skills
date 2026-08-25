@@ -48,6 +48,23 @@ test('review-pr: usage errors exit 2', () => {
   assert.equal(spawnSync('node', [script, '--help'], { encoding: 'utf8' }).status, 0);
 });
 
+test('review-pr: --local and --dry-run are separate jobs', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const spawn = (args) => spawnSync('node', [script, ...args], { encoding: 'utf8' });
+
+  const both = spawn(['--local', '--dry-run']);
+  assert.equal(both.status, 2);
+  assert.match(both.stderr, /--local/);
+
+  const localWithUrl = spawn(['--local', 'https://github.com/a/b/pull/1']);
+  assert.equal(localWithUrl.status, 2);
+  assert.match(localWithUrl.stderr, /--local/);
+
+  const dryNoUrl = spawn(['--dry-run']);
+  assert.equal(dryNoUrl.status, 2);
+  assert.match(dryNoUrl.stderr, /--local/);
+});
+
 test('validate: contract checks fail closed and fill missing verdicts', async () => {
   const { validateFindings, validateDebate, validateFinal } = await import('../skills/debate-review/scripts/lib/validate.mjs');
   const f = (id, extra = {}) => ({ id, file: 'a.py', line_start: 3, line_end: 4, severity: 'blocking', claim: 'x', confidence: 0.8, ...extra });
