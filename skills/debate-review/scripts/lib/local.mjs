@@ -37,9 +37,11 @@ export function resolveBase(repoDir, override) {
   const sym = run('git', ['-C', repoDir, 'symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], { allowFail: true });
   if (sym.status === 0) {
     const ref = sym.stdout.trim();
-    const sha = gitText(repoDir, ['rev-parse', '--verify', `${ref}^{commit}`]);
-    const name = ref.replace(/^refs\/remotes\//, '');
-    return { name, sha };
+    const probe = run('git', ['-C', repoDir, 'rev-parse', '--verify', `${ref}^{commit}`], { allowFail: true });
+    if (probe.status === 0) {
+      const name = ref.replace(/^refs\/remotes\//, '');
+      return { name, sha: probe.stdout.trim() };
+    }
   }
 
   for (const name of ['main', 'master']) {

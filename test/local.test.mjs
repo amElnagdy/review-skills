@@ -83,6 +83,11 @@ test('resolveBase: --base wins, else origin/HEAD, else main, else master, else t
     const resolved = resolveBase(dir);
     assert.equal(resolved.name, 'origin/main');
     assert.equal(resolved.sha, mainSha);
+
+    run('git', ['-C', dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/gone']);
+    const fallback = resolveBase(dir);
+    assert.equal(fallback.name, 'main');
+    assert.equal(fallback.sha, mainSha);
     fs.rmSync(bare, { recursive: true, force: true });
   });
 });

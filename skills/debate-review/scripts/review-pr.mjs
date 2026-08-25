@@ -251,7 +251,6 @@ async function main() {
       String(target.number),
       pr.head.slice(0, 12),
     ));
-  fs.mkdirSync(outDir, { recursive: true });
 
   const runLog = {
     schema: 'debate-review.run.v1',
@@ -269,6 +268,7 @@ async function main() {
   const save = () => fs.writeFileSync(path.join(outDir, 'run.json'), JSON.stringify(runLog, null, 2));
 
   try {
+    fs.mkdirSync(outDir, { recursive: true });
     const diff = text('git', ['-C', worktree, 'diff', `${baseRef}...HEAD`]);
     if (!diff.trim()) throw new Error('empty diff, nothing to review');
     const commits = text('git', ['-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline']);
