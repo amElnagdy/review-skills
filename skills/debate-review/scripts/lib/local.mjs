@@ -330,6 +330,8 @@ function sourceIndexMode(repoDir, rel) {
   const raw = run('git', ['-C', repoDir, '--literal-pathspecs', 'ls-files', '-s', '-z', '--', rel]).stdout;
   for (const entry of nulSplit(raw)) {
     const tab = entry.indexOf('\t');
+    // The pathspec also matches descendants (rel as a directory); only the exact entry counts.
+    if (tab === -1 || entry.slice(tab + 1) !== rel) continue;
     const [mode, , stage] = entry.slice(0, tab).split(' ');
     if (stage === '0') return mode;
   }
@@ -338,9 +340,11 @@ function sourceIndexMode(repoDir, rel) {
 
 function overlay(repoDir, tmp, snapshot) {
   const dirty = worktreeStatusPaths(repoDir);
-  const links = new Set([...gitlinkEntries(repoDir).keys(), ...gitlinkEntries(tmp).keys()]);
+  // Only source-index gitlinks exclude paths: a path that is a gitlink solely at HEAD (staged
+  // removal or typechange) must flow through normal staging so its replacement is snapshotted.
+  const links = new Set(gitlinkEntries(repoDir).keys());
   assertNoSpecialFiles(repoDir, links);
-  if (links.size) log('staged gitlink changes are in the snapshot; dirty submodule trees are not');
+  if (links.size || gitlinkEntries(tmp).size) log('staged gitlink changes are in the snapshot; dirty submodule trees are not');
 
   const cloneIndex = indexPaths(tmp);
   const prune = [...cloneIndex].filter((p) => !links.has(p) && (!snapshot.has(p) || sourceHasSymlinkParent(repoDir, p)));
@@ -351,12 +355,13 @@ function overlay(repoDir, tmp, snapshot) {
   }
 
   // Recopying unchanged files would restage smudged/filter/mode bytes as phantom diffs.
+  // underGitlink also skips stale index descendants (dir→gitlink) so submodule contents never copy.
   for (const rel of dirty) {
-    if (links.has(rel) || sourceHasSymlinkParent(repoDir, rel)) continue;
+    if (underGitlink(rel, links) || sourceHasSymlinkParent(repoDir, rel)) continue;
     placePath(repoDir, tmp, rel);
   }
   return [...dirty].filter((rel) => {
-    if (links.has(rel) || sourceHasSymlinkParent(repoDir, rel)) return false;
+    if (underGitlink(rel, links) || sourceHasSymlinkParent(repoDir, rel)) return false;
     try {
       const st = fs.lstatSync(path.join(tmp, rel));
       return !(st.isDirectory() && !st.isSymbolicLink());

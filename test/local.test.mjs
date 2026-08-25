@@ -524,6 +524,118 @@ test('snapshot overlay: staged gitlink update, add, and removal reach the snapsh
   });
 });
 
+test('snapshot overlay: staged gitlink-to-file and file-to-gitlink type changes', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const sha = text('git', ['-C', dir, 'rev-parse', 'HEAD']);
+    run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha},sub`]);
+    run('git', ['-C', dir, 'commit', '-m', 'gitlink']);
+    run('git', ['-C', dir, 'rm', '--cached', 'sub']);
+    fs.writeFileSync(path.join(dir, 'sub'), 'now-a-file');
+    run('git', ['-C', dir, 'add', 'sub']);
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'sub']), /^100644 blob /);
+      assert.equal(text('git', ['-C', snap.dir, 'show', 'HEAD:sub']), 'now-a-file');
+    } finally {
+      snap.cleanup();
+    }
+  });
+
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const sha = text('git', ['-C', dir, 'rev-parse', 'HEAD']);
+    fs.writeFileSync(path.join(dir, 'sub'), 'plain');
+    commitAll(dir, 'file');
+    run('git', ['-C', dir, 'rm', '--cached', 'sub']);
+    fs.unlinkSync(path.join(dir, 'sub'));
+    run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha},sub`]);
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'sub']), new RegExp(`^160000 commit ${sha}\\t`));
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: staged gitlink-to-directory and directory-to-gitlink type changes', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const sha = text('git', ['-C', dir, 'rev-parse', 'HEAD']);
+    run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha},sub`]);
+    run('git', ['-C', dir, 'commit', '-m', 'gitlink']);
+    run('git', ['-C', dir, 'rm', '--cached', 'sub']);
+    fs.mkdirSync(path.join(dir, 'sub'));
+    fs.writeFileSync(path.join(dir, 'sub', 'f'), 'vendored');
+    run('git', ['-C', dir, 'add', 'sub']);
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      const tree = text('git', ['-C', snap.dir, 'ls-tree', '-r', 'HEAD', 'sub']);
+      assert.match(tree, /^100644 blob .*\tsub\/f$/m);
+      assert.doesNotMatch(tree, /160000/);
+    } finally {
+      snap.cleanup();
+    }
+  });
+
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    fs.mkdirSync(path.join(dir, 'sub'));
+    fs.writeFileSync(path.join(dir, 'sub', 'f'), 'old-tracked');
+    commitAll(dir, 'dir');
+    run('git', ['-C', dir, 'rm', '-r', '--cached', 'sub']);
+    fs.rmSync(path.join(dir, 'sub'), { recursive: true });
+    const nested = path.join(dir, 'sub');
+    gitInit(nested, 'main');
+    fs.writeFileSync(path.join(nested, 'f'), 'SUBMODULE-SECRET');
+    commitAll(nested, 'n1');
+    const linked = text('git', ['-C', nested, 'rev-parse', 'HEAD']);
+    run('git', ['-C', dir, 'add', 'sub']);
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'sub']), new RegExp(`^160000 commit ${linked}\\t`));
+      const grep = run('git', ['-C', snap.dir, 'grep', 'SUBMODULE-SECRET', 'HEAD'], { allowFail: true });
+      assert.notEqual(grep.status, 0, 'submodule worktree contents must not reach the snapshot');
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: staged gitlink removal with a dirty submodule worktree on disk', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const nested = path.join(dir, 'vendor', 'dep');
+    gitInit(nested, 'main');
+    fs.writeFileSync(path.join(nested, 'x'), 'x');
+    commitAll(nested, 'n1');
+    run('git', ['-C', dir, 'add', 'vendor/dep']);
+    run('git', ['-C', dir, 'commit', '-m', 'sub']);
+    run('git', ['-C', dir, 'rm', '--cached', 'vendor/dep']);
+    fs.writeFileSync(path.join(nested, 'dirty-inside'), 'NOT-IN-SNAPSHOT');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      const tree = text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']);
+      assert.doesNotMatch(tree, /vendor/);
+      const grep = run('git', ['-C', snap.dir, 'grep', 'NOT-IN-SNAPSHOT', 'HEAD'], { allowFail: true });
+      assert.notEqual(grep.status, 0);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot overlay: unstaged submodule commits stay at the recorded gitlink', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'a'), 'a');
