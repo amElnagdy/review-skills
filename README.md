@@ -96,7 +96,8 @@ confidence floor are dropped before anything is posted.
 
 `--local` reviews the files on disk (committed, uncommitted, and untracked, honoring `.gitignore`)
 against a base branch. It never calls `gh` or `glab`. `--dry-run` still needs a live PR; it only
-skips the post. The two flags do not combine.
+skips the post. The two flags do not combine. Local snapshots reject non-UTF-8 Git paths instead of
+silently changing their bytes.
 
 | Invocation | Source | Forge | Post |
 | --- | --- | --- | --- |

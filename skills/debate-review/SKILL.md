@@ -24,7 +24,7 @@ node "<skill-dir>/scripts/review-pr.mjs" --local [--base <ref>]
 node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
 ```
 
-- If the user wants a review and there is no PR/MR URL, run `--local` from the repo (or `--repo-dir`). Do not invent a URL. Relay stdout. `--local` never talks to GitHub or GitLab.
+- If the user wants a review and there is no PR/MR URL, run `--local` from the repo (or `--repo-dir`). Do not invent a URL. Relay stdout. `--local` never talks to GitHub or GitLab and rejects non-UTF-8 Git paths rather than decoding them lossily.
 - `<pr-url>` is a GitHub `/pull/N` or GitLab `/-/merge_requests/N` URL. A bare number resolves against
   the cwd's `origin`.
 - `--dry-run` prints a live PR review instead of posting it. It does not combine with `--local`.

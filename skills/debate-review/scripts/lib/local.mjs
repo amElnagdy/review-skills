@@ -2,7 +2,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { TextDecoder } from 'node:util';
 import { run, text, log } from './shell.mjs';
+
+const STRICT_UTF8 = new TextDecoder('utf-8', { fatal: true });
 
 function gitText(repoDir, args, opts) {
   return text('git', ['-C', repoDir, ...args], opts);
@@ -26,6 +29,19 @@ function isolatedGit(tmp, hooksDir, args, opts = {}) {
 
 function nulSplit(stdout) {
   return (stdout || '').split('\0').filter(Boolean);
+}
+
+/** Path handling is string-based; a lossy decode would silently drop or mangle files, so fail closed. */
+function strictUtf8(raw) {
+  try {
+    return STRICT_UTF8.decode(raw);
+  } catch {
+    throw new Error('cannot snapshot non-UTF-8 Git paths; rename them before local review');
+  }
+}
+
+function gitPathSplit(raw) {
+  return nulSplit(strictUtf8(raw));
 }
 
 export function resolveBase(repoDir, override) {
@@ -65,9 +81,9 @@ function worktreeStatusPaths(repoDir) {
   const raw = run(
     'git',
     ['-C', repoDir, 'status', '--porcelain', '-z', '--untracked-files=all'],
-    withoutIndexRefresh(),
+    withoutIndexRefresh({ encoding: null }),
   ).stdout;
-  const tokens = (raw || '').split('\0');
+  const tokens = strictUtf8(raw).split('\0');
   const paths = new Set();
   for (let i = 0; i < tokens.length; i++) {
     const entry = tokens[i];
@@ -118,11 +134,12 @@ function gitlinksIn(repoDir) {
 }
 
 function indexPaths(repoDir) {
-  return new Set(nulSplit(run('git', ['-C', repoDir, 'ls-files', '-z']).stdout));
+  return new Set(gitPathSplit(run('git', ['-C', repoDir, 'ls-files', '-z'], { encoding: null }).stdout));
 }
 
 function snapshotPathSet(repoDir) {
-  return new Set(nulSplit(run('git', ['-C', repoDir, 'ls-files', '-z', '-co', '--exclude-standard']).stdout));
+  const raw = run('git', ['-C', repoDir, 'ls-files', '-z', '-co', '--exclude-standard'], { encoding: null }).stdout;
+  return new Set(gitPathSplit(raw));
 }
 
 function removeLeafNoFollow(abs) {
@@ -319,8 +336,7 @@ function sourceIndexMode(repoDir, rel) {
   return null;
 }
 
-function overlay(repoDir, tmp) {
-  const snapshot = snapshotPathSet(repoDir);
+function overlay(repoDir, tmp, snapshot) {
   const dirty = worktreeStatusPaths(repoDir);
   const links = new Set([...gitlinksIn(repoDir), ...gitlinksIn(tmp)]);
   assertNoSpecialFiles(repoDir, links);
@@ -356,20 +372,28 @@ function stageDirtyPaths(repoDir, tmp, hooksDir, staged) {
   const trustFileMode = fileMode.status !== 0 || fileMode.stdout.trim() !== 'false';
   const symlinks = run('git', ['-C', repoDir, 'config', '--bool', '--get', 'core.symlinks'], { allowFail: true });
   const materializedSymlinks = symlinks.status === 0 && symlinks.stdout.trim() === 'false';
+  const hashable = [];
   const leftover = [];
   for (const rel of staged) {
-    const src = path.join(repoDir, rel);
     let st;
     try {
-      st = fs.lstatSync(src);
+      st = fs.lstatSync(path.join(repoDir, rel));
     } catch {
       leftover.push(rel);
       continue;
     }
-    if (!st.isFile()) {
-      leftover.push(rel);
-      continue;
-    }
+    if (st.isFile()) hashable.push({ rel, st });
+    else leftover.push(rel);
+  }
+  // `add` must run before `update-index --replace`: --replace evicts D/F-conflicting
+  // index entries that these pathspecs still need to match (e.g. a/b when a becomes a file).
+  if (leftover.length) {
+    isolatedGit(tmp, hooksDir, ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], {
+      input: `${leftover.join('\0')}\0`,
+    });
+  }
+  for (const { rel, st } of hashable) {
+    const src = path.join(repoDir, rel);
     const indexMode = sourceIndexMode(repoDir, rel);
     let mode = (st.mode & 0o111) ? '100755' : '100644';
     if (indexMode === '120000' && materializedSymlinks) mode = '120000';
@@ -385,20 +409,7 @@ function stageDirtyPaths(repoDir, tmp, hooksDir, staged) {
       },
       input: fs.readFileSync(src),
     });
-    const parts = rel.split('/').filter(Boolean);
-    for (let i = 1; i < parts.length; i++) {
-      const ancestor = parts.slice(0, i).join('/');
-      const listed = isolatedGit(tmp, hooksDir, ['ls-files', '-s', '--', ancestor], { allowFail: true }).stdout.trim();
-      if (listed.startsWith('120000 ') || listed.startsWith('160000 ')) {
-        isolatedGit(tmp, hooksDir, ['rm', '--cached', '-f', '--', ancestor]);
-      }
-    }
-    isolatedGit(tmp, hooksDir, ['update-index', '--add', '--cacheinfo', `${mode},${sha},${rel}`]);
-  }
-  if (leftover.length) {
-    isolatedGit(tmp, hooksDir, ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], {
-      input: `${leftover.join('\0')}\0`,
-    });
+    isolatedGit(tmp, hooksDir, ['update-index', '--add', '--replace', '--cacheinfo', `${mode},${sha},${rel}`]);
   }
 }
 
@@ -438,6 +449,7 @@ export function snapshotWorkingTree(repoDir, { keep = false, base } = {}) {
   if (hasHiddenIndexBits(repoDir)) {
     throw new Error('cannot snapshot skip-worktree or assume-unchanged paths; unset those bits or disable sparse-checkout');
   }
+  const snapshotPaths = snapshotPathSet(repoDir);
   const resolved = resolveBase(repoDir, base);
   const userHead = gitText(repoDir, ['rev-parse', 'HEAD']);
 
@@ -465,7 +477,7 @@ export function snapshotWorkingTree(repoDir, { keep = false, base } = {}) {
 
     let madeCommit = false;
     if (!isClean(repoDir)) {
-      const staged = overlay(repoDir, tmp);
+      const staged = overlay(repoDir, tmp, snapshotPaths);
       if (staged.length) stageDirtyPaths(repoDir, tmp, hooksDir, staged);
       const cached = isolatedGit(tmp, hooksDir, ['diff', '--cached', '--quiet', 'HEAD', '--'], { allowFail: true });
       if (cached.status !== 0) {

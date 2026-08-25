@@ -237,6 +237,55 @@ test('snapshot overlay: symlink at HEAD replaced by a directory does not escape 
   }
 });
 
+test('snapshot overlay: tracked file replaced by a directory stages its descendants', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'old');
+    commitAll(dir, 'file');
+    fs.unlinkSync(path.join(dir, 'a'));
+    fs.mkdirSync(path.join(dir, 'a'));
+    fs.writeFileSync(path.join(dir, 'a', 'b'), 'new');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.equal(fs.readFileSync(path.join(snap.dir, 'a', 'b'), 'utf8'), 'new');
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']), /^a\/b$/m);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: tracked directory replaced by a file stages the file', () => {
+  withRepo((dir) => {
+    fs.mkdirSync(path.join(dir, 'a'));
+    fs.writeFileSync(path.join(dir, 'a', 'b'), 'old');
+    fs.writeFileSync(path.join(dir, 'a', 'c'), 'old2');
+    commitAll(dir, 'dir');
+    fs.rmSync(path.join(dir, 'a'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a'), 'new');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.equal(text('git', ['-C', snap.dir, 'show', 'HEAD:a']), 'new');
+      const tree = text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']);
+      assert.match(tree, /^a$/m);
+      assert.doesNotMatch(tree, /^a\//m);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot rejects non-UTF-8 Git paths instead of omitting them', { skip: process.platform !== 'linux' }, () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'base'), 'base');
+    commitAll(dir, 'base');
+    const invalidPath = Buffer.concat([Buffer.from(`${dir}${path.sep}bad-`), Buffer.from([0xff])]);
+    fs.writeFileSync(invalidPath, 'x');
+    assert.throws(() => snapshotWorkingTree(dir, { keep: false }), /non-UTF-8 Git paths/);
+  });
+});
+
 test('snapshot overlay: backslashes in Unix filenames are not path separators', { skip: process.platform === 'win32' }, () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'target'), 'target');
