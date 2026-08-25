@@ -208,10 +208,11 @@ async function main() {
   const printOnly = Boolean(opts.local || opts.dryRun);
 
   if (opts.local) {
-    repoDirForRoles = opts.repoDir
+    const given = opts.repoDir
       ? path.resolve(opts.repoDir)
       : text('git', ['rev-parse', '--show-toplevel']);
-    localSnapshot = snapshotWorkingTree(repoDirForRoles, { keep: opts.keep, base: opts.base });
+    localSnapshot = snapshotWorkingTree(given, { keep: opts.keep, base: opts.base });
+    repoDirForRoles = text('git', ['-C', given, 'rev-parse', '--show-toplevel']);
     pr = localSnapshot.pr;
     worktree = localSnapshot.dir;
     clone = localSnapshot.dir;

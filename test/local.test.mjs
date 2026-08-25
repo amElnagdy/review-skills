@@ -316,6 +316,38 @@ test('snapshot refuses conflicted and hidden-bit worktrees', () => {
   });
 });
 
+test('snapshot overlay: nested git directories are not walked for special files', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const nested = path.join(dir, 'nested');
+    gitInit(nested, 'main');
+    fs.writeFileSync(path.join(nested, 'x'), 'x');
+    commitAll(nested, 'x');
+    run('mkfifo', [path.join(nested, 'pipe')]);
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    snap.cleanup();
+  });
+});
+
+test('snapshotWorkingTree: a subdirectory path uses the worktree root', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const sub = path.join(dir, 'sub');
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, 'b'), 'b');
+    const snap = snapshotWorkingTree(sub, { keep: false });
+    try {
+      assert.equal(fs.readFileSync(path.join(snap.dir, 'a'), 'utf8'), 'a');
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']), /^sub\/b$/m);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot overlay: ignored directories are not walked for special files', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'a'), 'a');

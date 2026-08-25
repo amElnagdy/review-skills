@@ -155,8 +155,13 @@ function isSpecialFile(st) {
   return st.isFIFO() || st.isSocket() || st.isCharacterDevice() || st.isBlockDevice();
 }
 
-function isGitIgnored(repoDir, rel) {
-  return run('git', ['-C', repoDir, 'check-ignore', '-q', '--', rel], { allowFail: true }).status === 0;
+function ignoredSet(repoDir, rels) {
+  if (!rels.length) return new Set();
+  const result = run('git', ['-C', repoDir, 'check-ignore', '-z', '--stdin'], {
+    allowFail: true,
+    input: `${rels.join('\0')}\0`,
+  });
+  return new Set(nulSplit(result.stdout));
 }
 
 function underGitlink(rel, links) {
@@ -168,21 +173,45 @@ function underGitlink(rel, links) {
   return false;
 }
 
+function isNestedGitDir(abs, st) {
+  return st.isDirectory() && !st.isSymbolicLink() && fs.existsSync(path.join(abs, '.git'));
+}
+
 /** Git does not list fifos/sockets, so ls-files will not reach placePath for them. */
 function assertNoSpecialFiles(repoDir, links) {
-  const walk = (abs, rel) => {
-    if (rel && (isGitIgnored(repoDir, rel) || underGitlink(rel, links))) return;
-    const st = fs.lstatSync(abs);
-    if (isSpecialFile(st)) {
-      throw new Error(`cannot snapshot special file: ${rel || abs}`);
+  let frontier = [{ abs: repoDir, rel: '' }];
+  while (frontier.length) {
+    const children = [];
+    for (const { abs, rel } of frontier) {
+      let names;
+      try {
+        names = fs.readdirSync(abs);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        if (rel === '' && name === '.git') continue;
+        const childRel = rel ? `${rel}/${name}` : name;
+        if (underGitlink(childRel, links)) continue;
+        children.push({ abs: path.join(abs, name), rel: childRel });
+      }
     }
-    if (!st.isDirectory() || st.isSymbolicLink()) return;
-    for (const name of fs.readdirSync(abs)) {
-      if (rel === '' && name === '.git') continue;
-      walk(path.join(abs, name), rel ? `${rel}/${name}` : name);
+    const ignored = ignoredSet(repoDir, children.map((c) => c.rel));
+    const next = [];
+    for (const { abs, rel } of children) {
+      if (ignored.has(rel)) continue;
+      let st;
+      try {
+        st = fs.lstatSync(abs);
+      } catch {
+        continue;
+      }
+      if (isNestedGitDir(abs, st)) continue;
+      if (isSpecialFile(st)) throw new Error(`cannot snapshot special file: ${rel}`);
+      if (st.isDirectory() && !st.isSymbolicLink()) next.push({ abs, rel });
     }
-  };
-  walk(repoDir, '');
+    frontier = next;
+  }
 }
 
 function placePath(repoDir, tmp, rel) {
@@ -302,6 +331,7 @@ function buildPr(repoDir, tmp, resolved, madeCommit) {
 export function snapshotWorkingTree(repoDir, { keep = false, base } = {}) {
   repoDir = path.resolve(repoDir);
   assertWorkTree(repoDir);
+  repoDir = gitText(repoDir, ['rev-parse', '--show-toplevel']);
   if (hasUnmerged(repoDir)) throw new Error('cannot snapshot a conflicted working tree');
   if (hasHiddenIndexBits(repoDir)) {
     throw new Error('cannot snapshot skip-worktree or assume-unchanged paths; unset those bits or disable sparse-checkout');
