@@ -403,16 +403,24 @@ test('snapshot does not change the user HEAD, index, or worktree list', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'a'), 'a');
     commitAll(dir, 'a');
+    const indexPath = path.join(dir, '.git', 'index');
+    const cleanIndex = fs.readFileSync(indexPath);
+    const future = new Date(Date.now() + 10_000);
+    fs.utimesSync(path.join(dir, 'a'), future, future);
+    const cleanSnap = snapshotWorkingTree(dir, { keep: false });
+    cleanSnap.cleanup();
+    assert.deepEqual(fs.readFileSync(indexPath), cleanIndex);
+
     fs.writeFileSync(path.join(dir, 'a'), 'dirty');
     const head = text('git', ['-C', dir, 'rev-parse', 'HEAD']);
-    const index = fs.readFileSync(path.join(dir, '.git', 'index'));
+    const index = fs.readFileSync(indexPath);
     const trees = text('git', ['-C', dir, 'worktree', 'list']);
 
     const snap = snapshotWorkingTree(dir, { keep: false });
     snap.cleanup();
 
     assert.equal(text('git', ['-C', dir, 'rev-parse', 'HEAD']), head);
-    assert.deepEqual(fs.readFileSync(path.join(dir, '.git', 'index')), index);
+    assert.deepEqual(fs.readFileSync(indexPath), index);
     assert.equal(text('git', ['-C', dir, 'worktree', 'list']), trees);
     assert.equal(fs.readFileSync(path.join(dir, 'a'), 'utf8'), 'dirty');
   });

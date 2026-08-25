@@ -53,7 +53,9 @@ export function resolveBase(repoDir, override) {
 }
 
 export function isClean(repoDir) {
-  return gitText(repoDir, ['status', '--porcelain', '--untracked-files=normal']) === '';
+  return gitText(repoDir, ['status', '--porcelain', '--untracked-files=normal'], {
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+  }) === '';
 }
 
 export function hasUnmerged(repoDir) {
