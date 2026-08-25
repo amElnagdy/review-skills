@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseTarget, parseOrigin } from '../skills/debate-review/scripts/lib/forge.mjs';
@@ -68,6 +70,61 @@ test('review-pr: usage errors exit 2', () => {
   assert.equal(spawnSync('node', [script], { encoding: 'utf8' }).status, 2);
   assert.equal(spawnSync('node', [script, '1', '--contested', 'maybe'], { encoding: 'utf8' }).status, 2);
   assert.equal(spawnSync('node', [script, '--help'], { encoding: 'utf8' }).status, 0);
+});
+
+test('review-pr: --local and --dry-run are separate jobs', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const spawn = (args) => spawnSync('node', [script, ...args], { encoding: 'utf8' });
+
+  const both = spawn(['--local', '--dry-run']);
+  assert.equal(both.status, 2);
+  assert.match(both.stderr, /--local/);
+
+  const localWithUrl = spawn(['--local', 'https://github.com/a/b/pull/1']);
+  assert.equal(localWithUrl.status, 2);
+  assert.match(localWithUrl.stderr, /--local/);
+
+  const dryNoUrl = spawn(['--dry-run']);
+  assert.equal(dryNoUrl.status, 2);
+  assert.match(dryNoUrl.stderr, /--local/);
+});
+
+test('review-pr: --local --repo-dir non-repo exits 1 after parsing', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const missing = path.join(os.tmpdir(), 'dr-not-a-repo-' + process.pid);
+  fs.rmSync(missing, { recursive: true, force: true });
+  fs.mkdirSync(missing);
+  const result = spawnSync('node', [script, '--local', '--repo-dir', missing], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not a git work tree/);
+  fs.rmSync(missing, { recursive: true, force: true });
+});
+
+test('review-pr: --local removes the snapshot if --out-dir cannot be created', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-src-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-tmp-'));
+  const blocked = path.join(tmp, 'out-is-a-file');
+  fs.writeFileSync(blocked, 'not-a-dir');
+  try {
+    spawnSync('git', ['init', '-b', 'main', dir], { encoding: 'utf8' });
+    spawnSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
+    spawnSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+    spawnSync('git', ['-C', dir, 'config', 'commit.gpgsign', 'false']);
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    spawnSync('git', ['-C', dir, 'add', '-A']);
+    spawnSync('git', ['-C', dir, 'commit', '-m', 'a']);
+    const result = spawnSync('node', [script, '--local', '--repo-dir', dir, '--out-dir', blocked], {
+      encoding: 'utf8',
+      env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp },
+    });
+    assert.equal(result.status, 1);
+    const leftover = fs.readdirSync(tmp).filter((n) => n.startsWith('debate-review-local-'));
+    assert.deepEqual(leftover, []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('validate: contract checks fail closed and fill missing verdicts', async () => {

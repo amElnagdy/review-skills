@@ -21,6 +21,7 @@ Then ask your agent:
 
 ```text
 Use $debate-review on https://github.com/owner/repo/pull/123
+Use $debate-review --local on this repo before I open a PR.
 Use $babysit-pr on PR 123 until it is ready to merge.
 ```
 
@@ -91,22 +92,37 @@ confidence floor are dropped before anything is posted.
 | Reply and resolve (babysit-pr) | verified live | implemented, not yet verified on a live instance |
 | Bot author detection | reliable (`Bot` type) | only when the instance exposes `author.bot`; debate-review threads are found by marker either way |
 
+## Local preview
+
+`--local` reviews the files on disk (committed, uncommitted, and untracked, honoring `.gitignore`)
+against a base branch. It never calls `gh` or `glab`. `--dry-run` still needs a live PR; it only
+skips the post. The two flags do not combine. Local snapshots reject non-UTF-8 Git paths instead of
+silently changing their bytes.
+
+| Invocation | Source | Forge | Post |
+| --- | --- | --- | --- |
+| `--local` | Working tree snapshot | No | No |
+| `<pr> --dry-run` | Live PR | Yes | No |
+| `<pr>` | Live PR | Yes | Yes |
+
 ## Run it by hand
 
 Your agent normally runs these for you. They are here for testing, CI, or when there is no agent in
 the loop. `<skill-dir>` is the directory containing the skill's `SKILL.md`.
 
 ```bash
+node "<skill-dir>/scripts/review-pr.mjs" --local                  # working tree; print, no forge
 node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> --dry-run   # print, do not post
 node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number>             # post
 "<babysit-skill-dir>/scripts/threads.sh" <number>                      # harvest one round as JSON
 ```
 
-`review-pr.mjs --help` lists the flags: `--main` / `--debate` to override the lanes for one run,
-`--contested post|drop`, `--min-confidence`, `--timeout` (default 30 minutes per reviewer), `--force`
-to post again on the same head, `--keep` to leave the temporary worktree. Every run leaves its briefs,
-raw model output, and the three JSON documents under `~/.cache/debate-review/<owner>__<repo>/<N>/<head>/`
-so a surprising review can be traced back to the pass that produced it.
+`review-pr.mjs --help` lists the flags: `--local` to review the working tree with no forge, `--main` /
+`--debate` to override the lanes for one run, `--contested post|drop`, `--min-confidence`, `--timeout`
+(default 30 minutes per reviewer), `--force` to post again on the same head, `--keep` to leave the
+temporary worktree or snapshot clone. Every run leaves its briefs, raw model output, and the three JSON
+documents under `~/.cache/debate-review/<owner>__<repo>/<N>/<head>/` so a surprising review can be
+traced back to the pass that produced it.
 
 ## How this relates to the sibling repos
 

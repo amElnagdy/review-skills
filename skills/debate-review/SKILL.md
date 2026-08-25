@@ -1,6 +1,6 @@
 ---
 name: debate-review
-description: Two-model debate review of a GitHub PR or GitLab MR, posted as inline comments. Use for any PR/MR review request.
+description: Two-model debate review of a GitHub PR, GitLab MR, or local working tree, posted as inline comments or printed. Use for any PR/MR review request, or a local review before a PR exists.
 license: MIT
 compatibility: Requires Node 18+, `gh` (GitHub) or `glab` (GitLab) authenticated, and delegate-skills installed for the main/debate lanes.
 metadata:
@@ -20,11 +20,14 @@ yourself, and you do not touch the PR.
 ## Run it
 
 ```bash
+node "<skill-dir>/scripts/review-pr.mjs" --local [--base <ref>]
 node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
 ```
 
+- If the user wants a review and there is no PR/MR URL, run `--local` from the repo (or `--repo-dir`). Do not invent a URL. Relay stdout. `--local` never talks to GitHub or GitLab and rejects non-UTF-8 Git paths rather than decoding them lossily.
 - `<pr-url>` is a GitHub `/pull/N` or GitLab `/-/merge_requests/N` URL. A bare number resolves against
   the cwd's `origin`.
+- `--dry-run` prints a live PR review instead of posting it. It does not combine with `--local`.
 - The reviewers are two delegate-skills lanes, `review-main` and `review-debate`. If either is missing
   the script says so. Add them with `delegate-setup`. Pick two different implementers, since the debate
   is only worth something when the second model doesn't share the first one's blind spots (main
@@ -32,8 +35,6 @@ node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
   `--main <implementer>` or `--debate <implementer>`. Only implementers whose relay has `--read-only`
   are accepted. These two lanes belong to the reviewer. Don't point them at a lane you use for other
   work, such as a plan-debate lane.
-- `--dry-run` prints the review instead of posting it. Use it when the user wants to see the review
-  before it lands.
 - Exit code `3` means this head sha already has a debate-review. Re-run with `--force` to post again.
 - A run takes minutes, since it is two or three implementer sessions back to back. Run it in the
   background and report the printed URL when it finishes. Don't poll tightly.
@@ -53,3 +54,4 @@ resolve). Don't act on the findings yourself unless the user asks.
 `~/.cache/debate-review/<owner>__<repo>/<N>/<head>/` holds `run.json` (all three documents, timings,
 what was posted) plus `main/`, `debate/`, and `final/`, each with the brief sent and the relay's
 `result.json`.
+`--local` writes under `~/.cache/debate-review/local/<repo>/<branch>/<head>/` instead.
