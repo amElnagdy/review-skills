@@ -159,10 +159,19 @@ function isGitIgnored(repoDir, rel) {
   return run('git', ['-C', repoDir, 'check-ignore', '-q', '--', rel], { allowFail: true }).status === 0;
 }
 
+function underGitlink(rel, links) {
+  if (!rel) return false;
+  if (links.has(rel)) return true;
+  for (const link of links) {
+    if (rel.startsWith(`${link}/`)) return true;
+  }
+  return false;
+}
+
 /** Git does not list fifos/sockets, so ls-files will not reach placePath for them. */
-function assertNoSpecialFiles(repoDir) {
+function assertNoSpecialFiles(repoDir, links) {
   const walk = (abs, rel) => {
-    if (rel && isGitIgnored(repoDir, rel)) return;
+    if (rel && (isGitIgnored(repoDir, rel) || underGitlink(rel, links))) return;
     const st = fs.lstatSync(abs);
     if (isSpecialFile(st)) {
       throw new Error(`cannot snapshot special file: ${rel || abs}`);
@@ -243,9 +252,9 @@ function sourceHasSymlinkParent(repoDir, rel) {
 }
 
 function overlay(repoDir, tmp) {
-  assertNoSpecialFiles(repoDir);
   const snapshot = snapshotPathSet(repoDir);
   const links = new Set([...gitlinksIn(repoDir), ...gitlinksIn(tmp)]);
+  assertNoSpecialFiles(repoDir, links);
   if (links.size) log('submodule gitlinks are left at HEAD; dirty submodule trees are not in the snapshot');
 
   const cloneIndex = indexPaths(tmp);

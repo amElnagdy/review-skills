@@ -273,6 +273,25 @@ test('snapshot overlay: gitlinks stay at user HEAD', () => {
   });
 });
 
+test('snapshot overlay: gitlink working trees are not walked for special files', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    commitAll(dir, 'a');
+    const sha = text('git', ['-C', dir, 'rev-parse', 'HEAD']);
+    run('git', ['-C', dir, 'update-index', '--add', '--cacheinfo', `160000,${sha},vendor/dep`]);
+    run('git', ['-C', dir, 'commit', '-m', 'gitlink']);
+    fs.mkdirSync(path.join(dir, 'vendor', 'dep'), { recursive: true });
+    run('mkfifo', [path.join(dir, 'vendor', 'dep', 'pipe')]);
+    fs.writeFileSync(path.join(dir, 'dirty.txt'), 'd');
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-files', '-s', 'vendor/dep']), /^160000 /);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot refuses conflicted and hidden-bit worktrees', () => {
   withRepo((dir) => {
     fs.writeFileSync(path.join(dir, 'a'), 'a');
