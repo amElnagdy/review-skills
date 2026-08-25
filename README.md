@@ -8,7 +8,7 @@
 
 `debate-review` has a main reviewer read the PR, a second reviewer try to knock its findings down,
 and the main reviewer make the final call. One review with inline comments lands on the PR, posted
-from your own `gh` or `glab` account. `babysit-pr` then works the rounds: verifies each finding, fixes
+from your own `gh`, `glab`, or `az` account. `babysit-pr` then works the rounds: verifies each finding, fixes
 the blockers, replies in-thread, resolves, and re-triggers the next review. Both skills run through
 whatever coding agent you already drive (Claude Code, Codex, Cursor, OpenCode, Grok, and others) and
 the model subscriptions you already pay for.
@@ -21,6 +21,7 @@ Then ask your agent:
 
 ```text
 Use $debate-review on https://github.com/owner/repo/pull/123
+Use $debate-review --local on this repo before I open a PR.
 Use $babysit-pr on PR 123 until it is ready to merge.
 ```
 
@@ -38,7 +39,7 @@ flowchart LR
 
 | Skill | Job | Never does |
 | --- | --- | --- |
-| [`debate-review`](skills/debate-review/SKILL.md) | Reviews a GitHub PR, GitLab MR or Azure DevOps PR with two models in sequence and posts one `COMMENT` review with inline comments. Findings that survive the debate are posted as agreed; findings the second model refuted but the main reviewer kept are posted as contested, with both sides' reasoning. | Edit code, approve, request changes, post twice for the same head sha. |
+| [`debate-review`](skills/debate-review/SKILL.md) | Reviews a GitHub PR, GitLab MR or Azure DevOps PR with two models in sequence and posts non-approval inline comments plus a summary. Findings that survive the debate are posted as agreed; findings the second model refuted but the main reviewer kept are posted as contested, with both sides' reasoning. | Edit code, approve, request changes, post twice for the same head sha. |
 | [`babysit-pr`](skills/babysit-pr/SKILL.md) | Harvests every reviewer thread on the PR (debate-review, Codex, Greptile, any bot), checks each finding against the code, fixes what is real, replies in-thread with evidence and attribution, resolves, and re-runs the review for the next round. Reports when the PR meets the merge gate. | Merge, resolve a thread it did not answer, reply as anyone other than "model on behalf of user". |
 
 ## Requirements
@@ -87,7 +88,7 @@ confidence floor are dropped before anything is posted.
 
 | | GitHub | GitLab | Azure DevOps |
 | --- | --- | --- | --- |
-| Review posting | `gh api`, PR review with inline comments | `glab api`, MR discussions with diff positions | `az rest`, one comment thread per finding plus a summary thread |
+| Review posting | `gh api`, PR review with inline comments | `glab api`, MR discussions with diff positions | `az rest`, one comment thread per finding plus a closed summary thread |
 | Target URL | `/pull/<n>` | `/-/merge_requests/<n>` | `/_git/<repo>/pullrequest/<n>`, on `dev.azure.com` or `*.visualstudio.com` |
 | Spec source (`#123`) | issue | issue | work item |
 | Alert colours | yes | 17.10+ | no, alerts fall back to plain quotes |
@@ -95,9 +96,22 @@ confidence floor are dropped before anything is posted.
 | Reply and resolve (babysit-pr) | verified live | implemented, not yet verified on a live instance | not implemented yet |
 | Bot author detection | reliable (`Bot` type) | only when the instance exposes `author.bot`; debate-review threads are found by marker either way | n/a |
 
-Azure DevOps has no single review object, so one debate-review is N inline threads plus one summary
+Azure DevOps has no single review object, so one debate-review is N inline threads plus one closed summary
 thread carrying the marker. `--force` and the "already reviewed" check read the same marker back off
 the PR's threads, so a re-run on an unchanged head still exits 3.
+
+## Local preview
+
+`--local` reviews the files on disk (committed, uncommitted, and untracked, honoring `.gitignore`)
+against a base branch. It never calls a forge CLI. `--dry-run` still needs a live PR; it only
+skips the post. The two flags do not combine. Local snapshots reject non-UTF-8 Git paths instead of
+silently changing their bytes.
+
+| Invocation | Source | Forge | Post |
+| --- | --- | --- | --- |
+| `--local` | Working tree snapshot | No | No |
+| `<pr> --dry-run` | Live PR | Yes | No |
+| `<pr>` | Live PR | Yes | Yes |
 
 ## Run it by hand
 
@@ -105,16 +119,18 @@ Your agent normally runs these for you. They are here for testing, CI, or when t
 the loop. `<skill-dir>` is the directory containing the skill's `SKILL.md`.
 
 ```bash
+node "<skill-dir>/scripts/review-pr.mjs" --local                  # working tree; print, no forge
 node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> --dry-run   # print, do not post
 node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number>             # post
 "<babysit-skill-dir>/scripts/threads.sh" <number>                      # harvest one round as JSON
 ```
 
-`review-pr.mjs --help` lists the flags: `--main` / `--debate` to override the lanes for one run,
-`--contested post|drop`, `--min-confidence`, `--timeout` (default 30 minutes per reviewer), `--force`
-to post again on the same head, `--keep` to leave the temporary worktree. Every run leaves its briefs,
-raw model output, and the three JSON documents under `~/.cache/debate-review/<owner>__<repo>/<N>/<head>/`
-so a surprising review can be traced back to the pass that produced it.
+`review-pr.mjs --help` lists the flags: `--local` to review the working tree with no forge, `--main` /
+`--debate` to override the lanes for one run, `--contested post|drop`, `--min-confidence`, `--timeout`
+(default 30 minutes per reviewer), `--force` to post again on the same head, `--keep` to leave the
+temporary worktree or snapshot clone. Every run leaves its briefs, raw model output, and the three JSON
+documents under `~/.cache/debate-review/<owner>__<repo>/<N>/<head>/` so a surprising review can be
+traced back to the pass that produced it.
 
 ## How this relates to the sibling repos
 
@@ -133,8 +149,8 @@ node --test test/*.test.mjs
 ```
 
 The babysit tests run `threads.sh` end to end against fake `gh` and `glab` binaries in
-`test/fixtures/babysit/`, and `az` against `test/fixtures/azure/`, so every forge shape is covered
-without network.
+`test/fixtures/babysit/`. The debate-review tests drive the Azure forge functions against a fake
+`az` in `test/fixtures/azure/`. Both suites run without network.
 
 ## License
 

@@ -1,6 +1,6 @@
 ---
 name: debate-review
-description: Two-model debate review of a GitHub PR, GitLab MR or Azure DevOps PR, posted as inline comments. Use for any PR/MR review request.
+description: Two-model debate review of a GitHub PR, GitLab MR, Azure DevOps PR, or local working tree, posted as inline comments or printed. Use for any PR/MR review request, or a local review before a PR exists.
 license: MIT
 compatibility: Requires Node 18+, `gh` (GitHub), `glab` (GitLab) or `az` (Azure DevOps) authenticated, and delegate-skills installed for the main/debate lanes.
 metadata:
@@ -12,7 +12,7 @@ metadata:
 Two models argue before anything is posted. A main reviewer finds issues. A debate reviewer tries to
 knock them down and may add its own. The main reviewer then makes the final call, and one review with
 inline comments lands on the PR or MR. It posts from the user's own `gh`, `glab` or `az` account as a
-`COMMENT` review. It never approves and never requests changes.
+non-approval review or comment. It never approves and never requests changes.
 
 You are the orchestrator. You run one command and relay the result. You do not review the diff
 yourself, and you do not touch the PR.
@@ -20,16 +20,19 @@ yourself, and you do not touch the PR.
 ## Run it
 
 ```bash
+node "<skill-dir>/scripts/review-pr.mjs" --local [--base <ref>]
 node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
 ```
 
+- If the user wants a review and there is no PR/MR URL, run `--local` from the repo (or `--repo-dir`). Do not invent a URL. Relay stdout. `--local` never talks to a forge and rejects non-UTF-8 Git paths rather than decoding them lossily.
 - `<pr-url>` is a GitHub `/pull/N`, GitLab `/-/merge_requests/N`, or Azure DevOps
   `/_git/<repo>/pullrequest/N` URL (`dev.azure.com` or the legacy `*.visualstudio.com`). A bare number
   resolves against the cwd's `origin`, including Azure DevOps https and `ssh.dev.azure.com:v3/` remotes.
+- `--dry-run` prints a live PR review instead of posting it. It does not combine with `--local`.
 - Azure DevOps needs `az` logged in (`az login`) with access to the project. No extension is required,
   the script talks to the REST API through `az rest`. A review there is N inline comment threads plus
-  one summary thread, since Azure DevOps has no single review object; the alert blockquotes render as
-  plain quotes, which still read.
+  one closed summary thread, since Azure DevOps has no single review object; the alert blockquotes
+  render as plain quotes, which still read.
 - The reviewers are two delegate-skills lanes, `review-main` and `review-debate`. If either is missing
   the script says so. Add them with `delegate-setup`. Pick two different implementers, since the debate
   is only worth something when the second model doesn't share the first one's blind spots (main
@@ -37,8 +40,6 @@ node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
   `--main <implementer>` or `--debate <implementer>`. Only implementers whose relay has `--read-only`
   are accepted. These two lanes belong to the reviewer. Don't point them at a lane you use for other
   work, such as a plan-debate lane.
-- `--dry-run` prints the review instead of posting it. Use it when the user wants to see the review
-  before it lands.
 - Exit code `3` means this head sha already has a debate-review. Re-run with `--force` to post again.
 - A run takes minutes, since it is two or three implementer sessions back to back. Run it in the
   background and report the printed URL when it finishes. Don't poll tightly.
@@ -58,3 +59,4 @@ resolve). Don't act on the findings yourself unless the user asks.
 `~/.cache/debate-review/<owner>__<repo>/<N>/<head>/` holds `run.json` (all three documents, timings,
 what was posted) plus `main/`, `debate/`, and `final/`, each with the brief sent and the relay's
 `result.json`.
+`--local` writes under `~/.cache/debate-review/local/<repo>/<branch>/<head>/` instead.

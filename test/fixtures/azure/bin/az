@@ -3,6 +3,11 @@
 # POST bodies are appended to $AZ_LOG so the test can assert what would be sent.
 F="$FIXTURES/azure"
 
+if [ "$1" = "account" ] && [ "$2" = "get-access-token" ]; then
+  echo "fake-azure-token"
+  exit 0
+fi
+
 method="GET"; url=""; body=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -26,6 +31,8 @@ fi
 
 case "$url" in
   *"/pullRequests/1845/threads?"*) cat "$F/threads.json" ;;
+  *"/pullRequests/1845/iterations/3/changes?"*) cat "$F/changes.json" ;;
+  *"/pullRequests/1845/iterations?"*) cat "$F/iterations.json" ;;
   *"/pullRequests/1845?"*)         cat "$F/pr.json" ;;
   *"/wit/workitems/4907?"*)        cat "$F/workitem.json" ;;
   *) echo "fake az: unexpected call: $url" >&2; exit 1 ;;

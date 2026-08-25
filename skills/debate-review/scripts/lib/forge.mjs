@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { text, json } from './shell.mjs';
+import { run, text, json } from './shell.mjs';
 
 // Azure DevOps: the token audience `az rest` needs, and the API version every call is pinned to.
 const AZURE_RESOURCE = '499b84ac-1321-427f-aa17-267ca6975798';
@@ -12,9 +12,11 @@ const AZURE_API = '7.1';
 
 /** Turn a PR URL or a bare number (+ git origin) into { host, origin, owner, repo, number }. */
 export function parseTarget(target, originUrl) {
-  const github = target.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/pull\/(\d+)/);
-  if (github) {
-    return { host: 'github', origin: 'github.com', owner: github[1], repo: github[2], number: Number(github[3]) };
+  // GitLab first: `/-/merge_requests/` is unambiguous. GitHub Enterprise hosts can be named anything.
+  const gitlab = target.match(/^https?:\/\/([^/]+)\/(.+?)\/-\/merge_requests\/(\d+)/);
+  if (gitlab) {
+    const segments = gitlab[2].split('/');
+    return { host: 'gitlab', origin: gitlab[1], owner: segments.slice(0, -1).join('/'), repo: segments.at(-1), number: Number(gitlab[3]) };
   }
 
   // https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<id>  (project omitted when it equals the repo)
@@ -31,10 +33,9 @@ export function parseTarget(target, originUrl) {
     return azureTarget(vsts[1], vsts[2] ? decodeURIComponent(vsts[2]) : repo, repo, Number(vsts[4]));
   }
 
-  const gitlab = target.match(/^https?:\/\/([^/]+)\/(.+?)\/-\/merge_requests\/(\d+)/);
-  if (gitlab) {
-    const segments = gitlab[2].split('/');
-    return { host: 'gitlab', origin: gitlab[1], owner: segments.slice(0, -1).join('/'), repo: segments.at(-1), number: Number(gitlab[3]) };
+  const github = target.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/pull\/(\d+)/);
+  if (github) {
+    return { host: 'github', origin: github[1].toLowerCase(), owner: github[2], repo: github[3], number: Number(github[4]) };
   }
 
   if (/^\d+$/.test(target)) {
@@ -55,16 +56,16 @@ function azureTarget(org, project, repo, number) {
 
 /** Parse a git remote URL (https or ssh) into { host, origin, owner, repo }. */
 export function parseOrigin(url) {
-  const m = url.match(/^(?:https?:\/\/|git@|ssh:\/\/git@)([^/:]+)[/:](.+?)(?:\.git)?\/?$/);
+  const m = url.match(/^(?:https?:\/\/|ssh:\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[/:](.+?)(?:\.git)?\/?$/);
   if (!m) return null;
-  const origin = m[1].toLowerCase().replace(/^[^@]*@/, ''); // https://<org>@dev.azure.com/... carries userinfo
+  const origin = m[1].toLowerCase();
   const segments = m[2].split('/');
 
   const azure = azureOrigin(origin, segments);
   if (azure) return azure;
 
   return {
-    host: origin === 'github.com' ? 'github' : 'gitlab',
+    host: detectHost(origin),
     origin,
     owner: segments.slice(0, -1).join('/'),
     repo: segments.at(-1),
@@ -97,6 +98,28 @@ function azureOrigin(origin, segments) {
   return null;
 }
 
+const hostCache = new Map();
+
+/**
+ * github or gitlab for an arbitrary origin. A GitHub Enterprise host can be named
+ * anything, so ask gh whether it is logged in there rather than matching on the name;
+ * that is also the check that decides whether the gh calls below can work at all.
+ * No gh, or not logged in to that host, means gitlab.
+ */
+function detectHost(origin) {
+  if (origin === 'github.com') return 'github';
+  if (!hostCache.has(origin)) {
+    let ok = false;
+    try {
+      ok = run('gh', ['auth', 'status', '--hostname', origin], { allowFail: true }).status === 0;
+    } catch {
+      ok = false; // gh not installed
+    }
+    hostCache.set(origin, ok ? 'github' : 'gitlab');
+  }
+  return hostCache.get(origin);
+}
+
 export function projectPath(t) {
   return `${t.owner}/${t.repo}`;
 }
@@ -105,6 +128,17 @@ export function projectPath(t) {
 export function cloneUrl(t) {
   if (t.host === 'azure') return `${azureProjectUrl(t)}/_git/${encodeURIComponent(t.repo)}`;
   return `https://${t.origin}/${projectPath(t)}.git`;
+}
+
+/** Git options that reuse `az login` without putting the bearer token in argv or the remote URL. */
+export function gitAuth(t) {
+  if (t.host !== 'azure') return { args: [], env: process.env };
+  const token = text('az', ['account', 'get-access-token', '--resource', AZURE_RESOURCE,
+    '--query', 'accessToken', '--output', 'tsv']);
+  return {
+    args: ['--config-env=http.extraheader=DEBATE_REVIEW_AZURE_AUTH'],
+    env: { ...process.env, DEBATE_REVIEW_AZURE_AUTH: `AUTHORIZATION: bearer ${token}` },
+  };
 }
 
 function glabProject(t) {
@@ -149,14 +183,20 @@ function azureRest(url, { method = 'GET', body } = {}) {
 
 const shortRef = (ref) => String(ref || '').replace(/^refs\/heads\//, '');
 
+// GH_HOST points gh at the right instance; a no-op when the origin is github.com.
+function ghEnv(t) {
+  return { ...process.env, GH_HOST: t.origin };
+}
+
 // ---------- read the PR ----------
 
 /** Fetch what we need about the PR/MR: title, body, head/base shas, branch names, fetch ref. */
 export function fetchPR(t) {
   if (t.host === 'github') {
+    const env = ghEnv(t);
     const pr = json('gh', ['pr', 'view', String(t.number), '--repo', projectPath(t),
-      '--json', 'title,body,url,headRefOid,headRefName,baseRefName']);
-    const baseSha = text('gh', ['api', `repos/${projectPath(t)}/pulls/${t.number}`, '-q', '.base.sha']);
+      '--json', 'title,body,url,headRefOid,headRefName,baseRefName'], { env });
+    const baseSha = text('gh', ['api', `repos/${projectPath(t)}/pulls/${t.number}`, '-q', '.base.sha'], { env });
     return {
       title: pr.title,
       body: pr.body || '',
@@ -174,18 +214,24 @@ export function fetchPR(t) {
     if (!pr.lastMergeSourceCommit) {
       throw new Error(`PR ${t.number} has no lastMergeSourceCommit; Azure DevOps has not computed its merge yet`);
     }
+    const head = pr.lastMergeSourceCommit.commitId;
+    const iterations = azureRest(azureRepoApi(t, `/pullRequests/${t.number}/iterations?includeCommits=true`));
+    const iteration = (iterations.value || []).find(entry => entry.sourceRefCommit?.commitId === head);
+    if (!iteration) throw new Error(`Azure DevOps has no PR iteration for reviewed head ${head}`);
     return {
       title: pr.title,
       body: pr.description || '',
       url: `${pr.repository.webUrl}/pullrequest/${t.number}`,
-      head: pr.lastMergeSourceCommit.commitId,
+      head,
       headRef: shortRef(pr.sourceRefName),
       baseRef: shortRef(pr.targetRefName),
       baseSha: pr.lastMergeTargetCommit?.commitId,
+      iterationId: iteration.id,
       // The merge ref carries the head as a parent and exists even for a fork PR; the source branch
       // is the fallback for a PR whose merge could not be computed (conflicts).
       fetchRef: `refs/pull/${t.number}/merge`,
       fetchRefAlt: shortRef(pr.sourceRefName),
+      fetchUrlAlt: pr.forkSource?.repository?.remoteUrl,
     };
   }
 
@@ -207,7 +253,7 @@ export function fetchPR(t) {
 export function alreadyReviewed(t, pr) {
   const marker = `<!-- debate-review head=${pr.head}`;
   if (t.host === 'github') {
-    const bodies = text('gh', ['api', `repos/${projectPath(t)}/pulls/${t.number}/reviews`, '--paginate', '-q', '.[].body']);
+    const bodies = text('gh', ['api', `repos/${projectPath(t)}/pulls/${t.number}/reviews`, '--paginate', '-q', '.[].body'], { env: ghEnv(t) });
     return bodies.includes(marker);
   }
   if (t.host === 'azure') {
@@ -227,7 +273,7 @@ export function fetchSpec(t, pr, commitsText) {
   for (const n of numbers) {
     try {
       if (t.host === 'github') {
-        const issue = json('gh', ['issue', 'view', n, '--repo', projectPath(t), '--json', 'title,body,url']);
+        const issue = json('gh', ['issue', 'view', n, '--repo', projectPath(t), '--json', 'title,body,url'], { env: ghEnv(t) });
         parts.push(`Issue #${n}: ${issue.title}\n${issue.url}\n${issue.body || ''}`);
       } else if (t.host === 'azure') {
         // On Azure DevOps "#123" is a work item, and its description is HTML.
@@ -285,7 +331,7 @@ function postGithub(t, pr, body, comments) {
     })),
   };
   const review = json('gh', ['api', '--method', 'POST', `repos/${projectPath(t)}/pulls/${t.number}/reviews`, '--input', '-'],
-    { input: JSON.stringify(payload) });
+    { input: JSON.stringify(payload), env: ghEnv(t) });
   return { reviewId: review.id, url: review.html_url };
 }
 
@@ -323,18 +369,46 @@ function postGitlab(t, pr, body, comments) {
  */
 function postAzure(t, pr, body, comments) {
   const url = azureRepoApi(t, `/pullRequests/${t.number}/threads`);
+  const existingThreads = comments.length ? azureRest(url).value || [] : [];
+  const changes = comments.length
+    ? azureRest(azureRepoApi(t,
+      `/pullRequests/${t.number}/iterations/${pr.iterationId}/changes?$top=2000`)).changeEntries || []
+    : [];
+  const changeIds = new Map(changes.map(change => [change.item?.path, change.changeTrackingId]));
   const threadIds = [];
 
   for (const c of comments) {
+    const findingId = String(c.body).match(/^<!-- debate-review:([^\s]+)/)?.[1];
+    if (!findingId) throw new Error('Azure inline comment is missing its debate-review finding marker');
+    const marker = `<!-- debate-review:${findingId} head=${pr.head} -->`;
+    const existing = existingThreads.find(thread =>
+      thread.comments?.some(comment => String(comment.content).includes(marker)));
+    if (existing) {
+      threadIds.push(existing.id);
+      continue;
+    }
+
+    const filePath = c.path.startsWith('/') ? c.path : `/${c.path}`;
+    const changeTrackingId = changeIds.get(filePath);
+    if (changeTrackingId === undefined) {
+      throw new Error(`Azure DevOps returned no changeTrackingId for ${filePath} in iteration ${pr.iterationId}`);
+    }
     const thread = azureRest(url, {
       method: 'POST',
       body: {
-        comments: [{ parentCommentId: 0, content: c.body, commentType: 'text' }],
+        comments: [{ parentCommentId: 0, content: `${marker}\n${c.body}`, commentType: 'text' }],
         status: 'active',
         threadContext: {
-          filePath: c.path.startsWith('/') ? c.path : `/${c.path}`,
+          filePath,
           rightFileStart: { line: c.start_line || c.line, offset: 1 },
           rightFileEnd: { line: c.line, offset: 1 },
+        },
+        pullRequestThreadContext: {
+          changeTrackingId,
+          iterationContext: {
+            firstComparingIteration: pr.iterationId,
+            secondComparingIteration: pr.iterationId,
+          },
         },
       },
     });
@@ -343,7 +417,7 @@ function postAzure(t, pr, body, comments) {
 
   const summary = azureRest(url, {
     method: 'POST',
-    body: { comments: [{ parentCommentId: 0, content: body, commentType: 'text' }], status: 'active' },
+    body: { comments: [{ parentCommentId: 0, content: body, commentType: 'text' }], status: 'closed' },
   });
   return { summaryThreadId: summary.id, threadIds, url: pr.url };
 }

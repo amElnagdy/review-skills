@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTarget, parseOrigin, cloneUrl, fetchPR, alreadyReviewed, fetchSpec, postReview } from '../skills/debate-review/scripts/lib/forge.mjs';
+import { parseTarget, parseOrigin, cloneUrl, gitAuth, fetchPR, alreadyReviewed, fetchSpec, postReview } from '../skills/debate-review/scripts/lib/forge.mjs';
 import { diffLineMap, anchor } from '../skills/debate-review/scripts/lib/diff.mjs';
 import { extractJson, expectSchema } from '../skills/debate-review/scripts/lib/dispatch.mjs';
 
@@ -38,6 +38,8 @@ test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) an
   const expected = { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'Kultura', owner: 'wscegy/Kultura', repo: 'kultura-mobile' };
   assert.deepEqual(parseOrigin('https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), expected);
   assert.deepEqual(parseOrigin('git@ssh.dev.azure.com:v3/wscegy/Kultura/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('wscegy@vs-ssh.visualstudio.com:v3/wscegy/Kultura/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('ssh://wscegy@vs-ssh.visualstudio.com:22/v3/wscegy/Kultura/kultura-mobile'), expected);
   assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/Kultura/_git/kultura-mobile'), expected);
   assert.deepEqual(parseTarget('1845', 'https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), { ...expected, number: 1845 });
   assert.equal(cloneUrl(expected), 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile');
@@ -59,9 +61,15 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     const pr = fetchPR(t);
     assert.equal(pr.head, '49793f1fec6cd58262e25752b79be791c68eb474');
     assert.equal(pr.baseSha, '459026c8ad84bc296a0b44d5c3c1e4bbbbe81592');
+    assert.equal(pr.iterationId, 3);
     assert.deepEqual([pr.headRef, pr.baseRef], ['test/TEST-001-revenue-path-coverage', 'dev']);
     assert.deepEqual([pr.fetchRef, pr.fetchRefAlt], ['refs/pull/1845/merge', 'test/TEST-001-revenue-path-coverage']);
+    assert.equal(pr.fetchUrlAlt, 'https://dev.azure.com/wscegy/Forks/_git/kultura-mobile-fork');
     assert.equal(pr.url, 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845');
+
+    const auth = gitAuth(t);
+    assert.deepEqual(auth.args, ['--config-env=http.extraheader=DEBATE_REVIEW_AZURE_AUTH']);
+    assert.equal(auth.env.DEBATE_REVIEW_AZURE_AUTH, 'AUTHORIZATION: bearer fake-azure-token');
 
     // the fixture carries a marker for a different head sha
     assert.equal(alreadyReviewed(t, pr), false);
@@ -74,25 +82,51 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.ok(spec.includes('Pagination & payment.'));
 
     const result = postReview(t, pr, 'summary body', [
-      { path: 'lib/a.dart', line: 12, body: 'one' },
-      { path: 'lib/b.dart', line: 40, start_line: 38, body: 'two' },
+      { path: 'lib/a.dart', line: 12, body: '<!-- debate-review:F1 status=agreed -->\none' },
+      { path: 'lib/b.dart', line: 40, start_line: 38, body: '<!-- debate-review:F2 status=agreed -->\ntwo' },
     ]);
     assert.equal(result.threadIds.length, 2);
+    assert.equal(result.threadIds[0], 7020);              // existing F1 thread was reused
     assert.equal(result.url, pr.url);
 
     const posted = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
-    assert.equal(posted.length, 3);                       // 2 inline + 1 summary, in that order
-    assert.equal(posted[0].threadContext.filePath, '/lib/a.dart');   // azure wants a rooted path
-    assert.deepEqual(posted[0].threadContext.rightFileStart, { line: 12, offset: 1 });
-    assert.deepEqual(posted[0].threadContext.rightFileEnd, { line: 12, offset: 1 });
-    assert.deepEqual(posted[1].threadContext.rightFileStart, { line: 38, offset: 1 });
-    assert.deepEqual(posted[1].threadContext.rightFileEnd, { line: 40, offset: 1 });
-    assert.equal(posted[2].threadContext, undefined);     // the summary is not anchored to a file
-    assert.equal(posted[2].comments[0].content, 'summary body');
-    assert.equal(posted[2].status, 'active');
+    assert.equal(posted.length, 2);                       // existing F1 skipped; F2 then summary
+    assert.equal(posted[0].threadContext.filePath, '/lib/b.dart');
+    assert.deepEqual(posted[0].threadContext.rightFileStart, { line: 38, offset: 1 });
+    assert.deepEqual(posted[0].threadContext.rightFileEnd, { line: 40, offset: 1 });
+    assert.match(posted[0].comments[0].content, /^<!-- debate-review:F2 head=49793f1f/);
+    assert.deepEqual(posted[0].pullRequestThreadContext, {
+      changeTrackingId: 12,
+      iterationContext: { firstComparingIteration: 3, secondComparingIteration: 3 },
+    });
+    assert.equal(posted[1].threadContext, undefined);     // the summary is not anchored to a file
+    assert.equal(posted[1].comments[0].content, 'summary body');
+    assert.equal(posted[1].status, 'closed');
   } finally {
     for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
     fs.rmSync(path.dirname(log), { recursive: true, force: true });
+  }
+});
+
+test('parseTarget/parseOrigin: GitHub Enterprise hosts are github, not gitlab', () => {
+  const bin = path.join(ROOT, 'test/fixtures/forge/bin');
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}:${saved}`;
+  try {
+    // a GHE host cannot be recognised by name, so it is resolved by asking gh
+    assert.deepEqual(parseOrigin('https://ghe.example.com/acme/widget.git'),
+      { host: 'github', origin: 'ghe.example.com', owner: 'acme', repo: 'widget' });
+    assert.deepEqual(parseOrigin('git@ghe.example.com:acme/widget.git'),
+      { host: 'github', origin: 'ghe.example.com', owner: 'acme', repo: 'widget' });
+    assert.deepEqual(parseTarget('https://ghe.example.com/acme/widget/pull/5'),
+      { host: 'github', origin: 'ghe.example.com', owner: 'acme', repo: 'widget', number: 5 });
+    assert.deepEqual(parseTarget('5', 'https://ghe.example.com/acme/widget.git'),
+      { host: 'github', origin: 'ghe.example.com', owner: 'acme', repo: 'widget', number: 5 });
+    // a host gh does not know stays gitlab, and an MR url still wins on its own path
+    assert.equal(parseOrigin('https://git.example.com/grp/proj.git').host, 'gitlab');
+    assert.equal(parseTarget('https://git.example.com/grp/proj/-/merge_requests/7').host, 'gitlab');
+  } finally {
+    process.env.PATH = saved;
   }
 });
 
@@ -122,6 +156,61 @@ test('review-pr: usage errors exit 2', () => {
   assert.equal(spawnSync('node', [script], { encoding: 'utf8' }).status, 2);
   assert.equal(spawnSync('node', [script, '1', '--contested', 'maybe'], { encoding: 'utf8' }).status, 2);
   assert.equal(spawnSync('node', [script, '--help'], { encoding: 'utf8' }).status, 0);
+});
+
+test('review-pr: --local and --dry-run are separate jobs', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const spawn = (args) => spawnSync('node', [script, ...args], { encoding: 'utf8' });
+
+  const both = spawn(['--local', '--dry-run']);
+  assert.equal(both.status, 2);
+  assert.match(both.stderr, /--local/);
+
+  const localWithUrl = spawn(['--local', 'https://github.com/a/b/pull/1']);
+  assert.equal(localWithUrl.status, 2);
+  assert.match(localWithUrl.stderr, /--local/);
+
+  const dryNoUrl = spawn(['--dry-run']);
+  assert.equal(dryNoUrl.status, 2);
+  assert.match(dryNoUrl.stderr, /--local/);
+});
+
+test('review-pr: --local --repo-dir non-repo exits 1 after parsing', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const missing = path.join(os.tmpdir(), 'dr-not-a-repo-' + process.pid);
+  fs.rmSync(missing, { recursive: true, force: true });
+  fs.mkdirSync(missing);
+  const result = spawnSync('node', [script, '--local', '--repo-dir', missing], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not a git work tree/);
+  fs.rmSync(missing, { recursive: true, force: true });
+});
+
+test('review-pr: --local removes the snapshot if --out-dir cannot be created', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-src-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-tmp-'));
+  const blocked = path.join(tmp, 'out-is-a-file');
+  fs.writeFileSync(blocked, 'not-a-dir');
+  try {
+    spawnSync('git', ['init', '-b', 'main', dir], { encoding: 'utf8' });
+    spawnSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
+    spawnSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+    spawnSync('git', ['-C', dir, 'config', 'commit.gpgsign', 'false']);
+    fs.writeFileSync(path.join(dir, 'a'), 'a');
+    spawnSync('git', ['-C', dir, 'add', '-A']);
+    spawnSync('git', ['-C', dir, 'commit', '-m', 'a']);
+    const result = spawnSync('node', [script, '--local', '--repo-dir', dir, '--out-dir', blocked], {
+      encoding: 'utf8',
+      env: { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp },
+    });
+    assert.equal(result.status, 1);
+    const leftover = fs.readdirSync(tmp).filter((n) => n.startsWith('debate-review-local-'));
+    assert.deepEqual(leftover, []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('validate: contract checks fail closed and fill missing verdicts', async () => {

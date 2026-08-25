@@ -1,8 +1,8 @@
 # What gets posted
 
-One review per head sha, never one per finding. The review event is `COMMENT`, so it cannot approve
-or request changes on the author's behalf. Inline comments anchor to `line_start` through `line_end`
-on the new side of the diff.
+One review run per head sha. GitHub uses a `COMMENT` review; GitLab and Azure DevOps use comment
+threads plus a summary. None can approve or request changes on the author's behalf. Inline comments
+anchor to `line_start` through `line_end` on the new side of the diff.
 
 ## Levels
 
@@ -46,6 +46,9 @@ Suggested: <recommendation>
 
 _<debate_note>_
 ```
+
+Azure DevOps prepends `<!-- debate-review:<id> head=<sha> -->` so a retry can reuse any finding thread
+that landed before an earlier posting failure.
 
 A contested finding's first line reads `**<level>, contested. The second reviewer disagreed; the
 main reviewer holds it, reasons below.** <claim>`.
