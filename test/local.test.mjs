@@ -296,6 +296,25 @@ test('snapshot overlay: core.fileMode=false does not invent mode-only diffs', ()
   });
 });
 
+test('snapshot overlay: core.fileMode=false preserves mode on a dirty file', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'tool.sh'), 'old\n');
+    commitAll(dir, 'mode');
+    run('git', ['-C', dir, 'config', 'core.fileMode', 'false']);
+    fs.chmodSync(path.join(dir, 'tool.sh'), 0o755);
+    fs.writeFileSync(path.join(dir, 'tool.sh'), 'new\n');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'tool.sh']), /^100644 /);
+      assert.equal(text('git', ['-C', snap.dir, 'show', 'HEAD:tool.sh']), 'new');
+      assert.doesNotMatch(text('git', ['-C', snap.dir, 'diff', '--summary', 'HEAD~1', 'HEAD']), /mode change/);
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
 test('snapshot overlay: core.autocrlf=true does not invent CRLF diffs', () => {
   withRepo((dir) => {
     run('git', ['-C', dir, 'config', 'core.autocrlf', 'true']);
@@ -382,6 +401,27 @@ test('snapshot overlay: core.symlinks=false does not invent type changes', () =>
     try {
       const changed = text('git', ['-C', snap.dir, 'diff', '--name-only', 'HEAD~1', 'HEAD']);
       assert.equal(changed, 'dirty.txt');
+    } finally {
+      snap.cleanup();
+    }
+  });
+});
+
+test('snapshot overlay: core.symlinks=false preserves a dirty symlink', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'one'), 'one\n');
+    fs.writeFileSync(path.join(dir, 'two'), 'two\n');
+    fs.symlinkSync('one', path.join(dir, 'link'));
+    commitAll(dir, 'symlink');
+    run('git', ['-C', dir, 'config', 'core.symlinks', 'false']);
+    fs.unlinkSync(path.join(dir, 'link'));
+    fs.writeFileSync(path.join(dir, 'link'), 'two');
+
+    const snap = snapshotWorkingTree(dir, { keep: false });
+    try {
+      assert.match(text('git', ['-C', snap.dir, 'ls-tree', 'HEAD', 'link']), /^120000 /);
+      assert.equal(text('git', ['-C', snap.dir, 'show', 'HEAD:link']), 'two');
+      assert.doesNotMatch(text('git', ['-C', snap.dir, 'diff', '--summary', 'HEAD~1', 'HEAD']), /mode change/);
     } finally {
       snap.cleanup();
     }

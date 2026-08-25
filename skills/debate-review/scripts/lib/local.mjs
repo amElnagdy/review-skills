@@ -309,6 +309,16 @@ function sourceHasSymlinkParent(repoDir, rel) {
   return false;
 }
 
+function sourceIndexMode(repoDir, rel) {
+  const raw = run('git', ['-C', repoDir, '--literal-pathspecs', 'ls-files', '-s', '-z', '--', rel]).stdout;
+  for (const entry of nulSplit(raw)) {
+    const tab = entry.indexOf('\t');
+    const [mode, , stage] = entry.slice(0, tab).split(' ');
+    if (stage === '0') return mode;
+  }
+  return null;
+}
+
 function overlay(repoDir, tmp) {
   const snapshot = snapshotPathSet(repoDir);
   const dirty = worktreeStatusPaths(repoDir);
@@ -342,6 +352,10 @@ function overlay(repoDir, tmp) {
 
 /** Hash through the source repo so clean filters/CRLF apply, but write the blob only into the clone. */
 function stageDirtyPaths(repoDir, tmp, hooksDir, staged) {
+  const fileMode = run('git', ['-C', repoDir, 'config', '--bool', '--get', 'core.fileMode'], { allowFail: true });
+  const trustFileMode = fileMode.status !== 0 || fileMode.stdout.trim() !== 'false';
+  const symlinks = run('git', ['-C', repoDir, 'config', '--bool', '--get', 'core.symlinks'], { allowFail: true });
+  const materializedSymlinks = symlinks.status === 0 && symlinks.stdout.trim() === 'false';
   const leftover = [];
   for (const rel of staged) {
     const src = path.join(repoDir, rel);
@@ -356,8 +370,14 @@ function stageDirtyPaths(repoDir, tmp, hooksDir, staged) {
       leftover.push(rel);
       continue;
     }
-    const mode = (st.mode & 0o111) ? '100755' : '100644';
-    const sha = text('git', ['-C', repoDir, 'hash-object', '-w', '--path', rel, '--stdin'], {
+    const indexMode = sourceIndexMode(repoDir, rel);
+    let mode = (st.mode & 0o111) ? '100755' : '100644';
+    if (indexMode === '120000' && materializedSymlinks) mode = '120000';
+    else if (!trustFileMode) mode = indexMode === '100755' ? '100755' : '100644';
+    const hashArgs = mode === '120000'
+      ? ['hash-object', '-w', '--stdin']
+      : ['hash-object', '-w', '--path', rel, '--stdin'];
+    const sha = text('git', ['-C', repoDir, ...hashArgs], {
       env: {
         ...process.env,
         GIT_OBJECT_DIRECTORY: path.join(tmp, '.git', 'objects'),
