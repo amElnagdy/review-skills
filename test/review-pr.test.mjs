@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseTarget, parseOrigin, cloneUrl, gitAuth, fetchPR, alreadyReviewed, fetchSpec, postReview } from '../skills/debate-review/scripts/lib/forge.mjs';
 import { diffLineMap, anchor } from '../skills/debate-review/scripts/lib/diff.mjs';
-import { extractJson, expectSchema } from '../skills/debate-review/scripts/lib/dispatch.mjs';
+import { extractJson, expectSchema, reviewIsolationArgs } from '../skills/debate-review/scripts/lib/dispatch.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -207,6 +207,20 @@ test('extractJson + expectSchema', () => {
   assert.deepEqual(extractJson('prose {"schema":"x"} trailing'), { schema: 'x' });
   assert.throws(() => extractJson('nothing here'));
   assert.throws(() => expectSchema({ schema: 'wrong' }, 'debate-review.findings.v1', 'main'));
+});
+
+test('review isolation prefers user-config isolation and falls back to pure mode', () => {
+  assert.deepEqual(reviewIsolationArgs('flags: --read-only --ignore-user-config --pure'), ['--ignore-user-config']);
+  assert.deepEqual(reviewIsolationArgs('flags: --read-only --pure'), ['--pure']);
+  assert.deepEqual(reviewIsolationArgs('flags: --read-only'), []);
+});
+
+test('review prompts require Windows-portable shell commands', () => {
+  for (const name of ['review-main.md', 'review-debate.md']) {
+    const prompt = fs.readFileSync(path.join(ROOT, 'skills/debate-review/assets/prompts', name), 'utf8');
+    assert.match(prompt, /PowerShell-native/);
+    assert.match(prompt, /Do not invoke Unix-only commands/);
+  }
 });
 
 test('review-pr: usage errors exit 2', () => {
