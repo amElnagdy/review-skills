@@ -245,9 +245,14 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
     FAKE_GIT_MISSING_HEAD: '1',
   };
   try {
-    const result = spawnSync('node', [script,
+    const args = [script,
       'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845',
-      '--repo-dir', repo, '--out-dir', out], { encoding: 'utf8', env });
+      '--repo-dir', repo, '--out-dir', out];
+    const failed = spawnSync('node', args, { encoding: 'utf8', env: { ...env, AZ_FAIL_POST: '1' } });
+    assert.equal(failed.status, 1);
+    assert.ok(JSON.parse(fs.readFileSync(path.join(out, 'run.json'))).posted);
+
+    const result = spawnSync('node', args, { encoding: 'utf8', env });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /resumed 1 saved inline comment/);
     const posted = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -256,6 +261,26 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
     assert.match(fs.readFileSync(gitLog, 'utf8'),
       /fetch --quiet https:\/\/dev\.azure\.com\/wscegy\/Forks\/_git\/kultura-mobile-fork test\/TEST-001/);
     assert.ok(JSON.parse(fs.readFileSync(path.join(out, 'run.json'))).postResult);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('review-pr: a corrupt Azure run log falls back to a normal review', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-corrupt-repo-'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-corrupt-out-'));
+  fs.writeFileSync(path.join(out, 'run.json'), '{');
+  const bins = [path.join(ROOT, 'test/fixtures/azure-git/bin'), path.join(ROOT, 'test/fixtures/azure/bin')];
+  const env = { ...process.env, PATH: `${bins.join(':')}:${process.env.PATH}`, FIXTURES: path.join(ROOT, 'test/fixtures') };
+  try {
+    const result = spawnSync('node', [script,
+      'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845',
+      '--repo-dir', repo, '--out-dir', out], { encoding: 'utf8', env });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /empty diff/);
+    assert.doesNotMatch(result.stderr, /JSON|Unexpected end/);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(out, { recursive: true, force: true });

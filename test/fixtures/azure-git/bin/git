@@ -14,6 +14,8 @@ case "$*" in
   *" worktree remove "*)
     dir="${@: -1}"
     rm -rf "$dir" ;;
+  *" diff "*)
+    exit 0 ;;
   *)
     echo "fake git: unexpected call: $*" >&2
     exit 1 ;;

@@ -224,7 +224,13 @@ function findStandards(worktree) {
 function savedAzurePost(outDir, target, pr) {
   const file = path.join(outDir, 'run.json');
   if (!fs.existsSync(file)) return null;
-  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  let saved;
+  try {
+    saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    if (error instanceof SyntaxError || error.code === 'ENOENT') return null;
+    throw error;
+  }
   if (saved.schema !== 'debate-review.run.v1' || saved.printOnly !== false || saved.postResult) return null;
   if (saved.pr?.head !== pr.head || saved.target?.host !== 'azure') return null;
   if (saved.target.number !== target.number || projectPath(saved.target) !== projectPath(target)) return null;
@@ -315,8 +321,9 @@ async function main() {
       ? savedAzurePost(outDir, target, pr)
       : null;
     if (savedPost) {
+      Object.assign(runLog, savedPost);
       const result = postReview(target, pr, savedPost.posted.body, savedPost.posted.comments);
-      Object.assign(runLog, savedPost, { postResult: result });
+      runLog.postResult = result;
       log(`resumed ${savedPost.posted.comments.length} saved inline comment(s): ${result.url}`);
       process.stdout.write(`${result.url}\n`);
       return;
