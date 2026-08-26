@@ -288,7 +288,7 @@ async function main() {
       pr.head.slice(0, 12),
     );
 
-    const savedPost = !printOnly && target.host === 'azure' ? savedAzurePost(outDir, target, pr) : null;
+    const savedPost = !printOnly && !opts.force && target.host === 'azure' ? savedAzurePost(outDir, target, pr) : null;
     if (savedPost) {
       try {
         const result = postReview(target, { ...pr, postAttempt: savedPost.postAttempt }, savedPost.posted.body, savedPost.posted.comments);

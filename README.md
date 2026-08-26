@@ -45,6 +45,7 @@ flowchart LR
 ## Requirements
 
 - Node 18 or newer.
+- Git 2.31 or newer for Azure DevOps (`--config-env` keeps the access token out of command arguments).
 - `gh` (GitHub), `glab` (GitLab, including self-hosted) or `az` (Azure DevOps) logged in to an account
   that can comment on the PR. Reviews and replies post as that account. Azure DevOps needs no `az`
   extension: the script uses `az rest` against the REST API.

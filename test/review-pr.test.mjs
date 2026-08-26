@@ -255,11 +255,13 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
   const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-resume-repo-'));
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-resume-out-'));
+  const forceOut = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-force-out-'));
   const log = path.join(out, 'posted.ndjson');
   const gitLog = path.join(out, 'git.ndjson');
+  const forceGitLog = path.join(forceOut, 'git.ndjson');
   const target = { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'Kultura', owner: 'wscegy/Kultura', repo: 'kultura-mobile', number: 1845 };
   const head = '49793f1fec6cd58262e25752b79be791c68eb474';
-  fs.writeFileSync(path.join(out, 'run.json'), JSON.stringify({
+  const savedRun = {
     schema: 'debate-review.run.v1',
     printOnly: false,
     force: true,
@@ -270,7 +272,9 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
       body: `<!-- debate-review head=${head} main=claude -->\nsummary`,
       comments: [{ path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=agreed -->\none' }],
     },
-  }));
+  };
+  fs.writeFileSync(path.join(out, 'run.json'), JSON.stringify(savedRun));
+  fs.writeFileSync(path.join(forceOut, 'run.json'), JSON.stringify(savedRun));
   const bins = [path.join(ROOT, 'test/fixtures/azure-git/bin'), path.join(ROOT, 'test/fixtures/azure/bin')];
   const env = {
     ...process.env,
@@ -281,9 +285,15 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
     FAKE_GIT_MISSING_HEAD: '1',
   };
   try {
-    const args = [script,
-      'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845',
-      '--repo-dir', repo, '--out-dir', out, '--force'];
+    const url = 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845';
+    const forced = spawnSync('node', [script, url, '--repo-dir', repo, '--out-dir', forceOut, '--force'], {
+      encoding: 'utf8', env: { ...env, FAKE_GIT_LOG: forceGitLog },
+    });
+    assert.equal(forced.status, 1);
+    assert.doesNotMatch(forced.stderr, /resumed/);
+    assert.match(fs.readFileSync(forceGitLog, 'utf8'), / fetch /);
+
+    const args = [script, url, '--repo-dir', repo, '--out-dir', out];
     const failed = spawnSync('node', args, { encoding: 'utf8', env: { ...env, AZ_FAIL_POST: '1' } });
     assert.equal(failed.status, 1);
     assert.ok(JSON.parse(fs.readFileSync(path.join(out, 'run.json'))).posted);
@@ -299,6 +309,7 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(out, { recursive: true, force: true });
+    fs.rmSync(forceOut, { recursive: true, force: true });
   }
 });
 
