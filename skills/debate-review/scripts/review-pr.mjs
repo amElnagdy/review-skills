@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // debate-review · review-pr.mjs
 //
-// Review a GitHub PR / GitLab MR with two implementers that debate, then post one review.
+// Review a GitHub PR / GitLab MR / Azure DevOps PR with two implementers that debate, then post one review.
 //
 //   1. main reviewer   → findings
 //   2. debate reviewer → confirm / refute / downgrade each finding, add its own
 //   3. main reviewer   → final call (agreed / contested / withdrawn)
 //   4. post one review with inline comments (or print it with --dry-run / --local)
 //
-// Shells out to git, gh|glab, and delegate-skills relays in --read-only. Never commits, never
+// Shells out to git, gh|glab|az, and delegate-skills relays in --read-only. Never commits, never
 // edits the PR branch, never approves or requests changes.
 
 import fs from 'node:fs';
@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { run, text, log } from './lib/shell.mjs';
 import { snapshotWorkingTree } from './lib/local.mjs';
-import { parseTarget, parseOrigin, projectPath, fetchPR, alreadyReviewed, fetchSpec, postReview } from './lib/forge.mjs';
+import { parseTarget, parseOrigin, projectPath, cloneUrl, gitAuth, fetchPR, alreadyReviewed, fetchSpec, postReview } from './lib/forge.mjs';
 import { diffLineMap, anchor } from './lib/diff.mjs';
 import { resolveRole, dispatch, extractJson } from './lib/dispatch.mjs';
 import { validateFindings, validateDebate, validateFinal } from './lib/validate.mjs';
@@ -31,6 +31,12 @@ const HELP = `debate-review · review-pr.mjs
 Usage:
   node review-pr.mjs --local [--base <ref>] [--repo-dir <dir>] [options]
   node review-pr.mjs <pr-url | number> [--dry-run] [options]
+
+Targets:
+  GitHub        https://github.com/<owner>/<repo>/pull/<n>
+  GitLab        https://<host>/<group>/<repo>/-/merge_requests/<n>
+  Azure DevOps  https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<n>
+  <n>           resolved against the origin of the current clone
 
 Options:
   --local                   Review the working tree. No GitHub/GitLab. Prints the review.
@@ -124,12 +130,14 @@ function cloneMatches(dir, target) {
   if (r.status !== 0) return false;
   const origin = parseOrigin(r.stdout.trim());
   return origin
+    && origin.host === target.host
+    && origin.origin.toLowerCase() === target.origin.toLowerCase()
     && origin.owner.toLowerCase() === target.owner.toLowerCase()
     && origin.repo.toLowerCase() === target.repo.toLowerCase();
 }
 
 /** Find a local clone of the PR's repo: --repo-dir, else cwd, else a cache clone. */
-function findClone(target, opts) {
+function findClone(target, opts, auth) {
   if (opts.repoDir) {
     if (!cloneMatches(opts.repoDir, target)) throw new Error(`--repo-dir origin does not match ${projectPath(target)}`);
     return path.resolve(opts.repoDir);
@@ -138,24 +146,44 @@ function findClone(target, opts) {
   const top = run('git', ['rev-parse', '--show-toplevel'], { allowFail: true });
   if (top.status === 0 && cloneMatches(top.stdout.trim(), target)) return top.stdout.trim();
 
-  const cache = path.join(os.homedir(), '.cache', 'debate-review', 'clones', `${target.owner.replace(/\//g, '__')}__${target.repo}`);
+  const cacheName = [target.host, target.origin, target.owner, target.repo].join('__').replace(/\//g, '__');
+  const cache = path.join(os.homedir(), '.cache', 'debate-review', 'clones', cacheName);
   if (!fs.existsSync(cache)) {
     log(`cloning ${projectPath(target)} into ${cache}`);
-    const url = `https://${target.origin}/${projectPath(target)}.git`;
-    run('git', ['clone', '--filter=blob:none', url, cache], { stdio: ['ignore', 'ignore', 'inherit'] });
+    run('git', [...auth.args, 'clone', '--filter=blob:none', cloneUrl(target), cache],
+      { env: auth.env, stdio: ['ignore', 'ignore', 'inherit'] });
   }
   return cache;
 }
 
 /** Fetch the PR head + base and check the head out in a throwaway worktree. */
-function makeWorktree(clone, pr, baseBranch) {
-  run('git', ['-C', clone, 'fetch', '--quiet', 'origin', pr.fetchRef]);
-  run('git', ['-C', clone, 'fetch', '--quiet', 'origin', baseBranch]);
+function makeWorktree(clone, pr, baseBranch, auth) {
+  fetchHead(clone, pr, auth);
+  run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', 'origin', baseBranch], { env: auth.env });
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-'));
   fs.rmSync(dir, { recursive: true, force: true }); // git wants to create it
   run('git', ['-C', clone, 'worktree', 'add', '--detach', '--quiet', dir, pr.head]);
   return dir;
+}
+
+/**
+ * Fetch the ref that carries the PR head. Azure DevOps also reports a fallback: its merge ref only
+ * exists once the merge has been computed, and a conflicted PR has none.
+ */
+function fetchHead(clone, pr, auth) {
+  const first = run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', 'origin', pr.fetchRef],
+    { allowFail: true, env: auth.env });
+  const headExists = first.status === 0
+    && run('git', ['-C', clone, 'cat-file', '-e', `${pr.head}^{commit}`], { allowFail: true }).status === 0;
+  if (headExists) return;
+  if (!pr.fetchRefAlt) {
+    if (first.status !== 0) throw new Error(`cannot fetch ${pr.fetchRef}\n${first.stderr}`);
+    throw new Error(`fetched ${pr.fetchRef}, but reviewed head ${pr.head} is missing; the head may have moved`);
+  }
+  log(`${pr.fetchRef} is not available, falling back to ${pr.fetchRefAlt}`);
+  run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', pr.fetchUrlAlt || 'origin', pr.fetchRefAlt],
+    { env: auth.env });
 }
 
 function removeWorktree(clone, dir) {
@@ -194,6 +222,23 @@ function findStandards(worktree) {
   return found.length ? found.join(', ') : 'none found, skip the Standards axis';
 }
 
+function savedAzurePost(outDir, target, pr) {
+  const file = path.join(outDir, 'run.json');
+  if (!fs.existsSync(file)) return null;
+  let saved;
+  try {
+    saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    if (error instanceof SyntaxError || error.code === 'ENOENT') return null;
+    throw error;
+  }
+  if (saved.schema !== 'debate-review.run.v1' || saved.printOnly !== false || saved.postResult) return null;
+  if (saved.pr?.head !== pr.head || saved.target?.host !== 'azure') return null;
+  if (saved.target.number !== target.number || projectPath(saved.target) !== projectPath(target)) return null;
+  if (!saved.posted?.body || !Array.isArray(saved.posted.comments)) return null;
+  return saved;
+}
+
 // ============================================================ flow
 
 async function main() {
@@ -203,8 +248,10 @@ async function main() {
   let pr;
   let clone;
   let worktree;
+  let outDir;
   let localSnapshot = null;
   let repoDirForRoles;
+  let auth = { args: [], env: process.env };
   const printOnly = Boolean(opts.local || opts.dryRun);
 
   if (opts.local) {
@@ -216,26 +263,7 @@ async function main() {
     pr = localSnapshot.pr;
     worktree = localSnapshot.dir;
     clone = localSnapshot.dir;
-    log(`local ${path.basename(repoDirForRoles)} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
-  } else {
-    target = parseTarget(opts.target, currentOrigin());
-    pr = fetchPR(target);
-    log(`${projectPath(target)}#${target.number} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
-
-    if (!opts.force && !opts.dryRun && alreadyReviewed(target, pr)) {
-      log('this head already has a debate-review; use --force to post another');
-      process.exit(3);
-    }
-
-    clone = findClone(target, opts);
-    worktree = makeWorktree(clone, pr, pr.baseRef);
-    repoDirForRoles = clone;
-  }
-
-  const baseRef = opts.local ? pr.baseSha : (opts.base || pr.baseSha);
-
-  const outDir = opts.outDir || (opts.local
-    ? path.join(
+    outDir = opts.outDir || path.join(
       os.homedir(),
       '.cache',
       'debate-review',
@@ -243,15 +271,48 @@ async function main() {
       path.basename(repoDirForRoles),
       pr.headRef.replace(/\//g, '__'),
       pr.head.slice(0, 12),
-    )
-    : path.join(
+    );
+    log(`local ${path.basename(repoDirForRoles)} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
+  } else {
+    target = parseTarget(opts.target, currentOrigin());
+    pr = fetchPR(target);
+    log(`${projectPath(target)}#${target.number} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
+    outDir = opts.outDir || path.join(
       os.homedir(),
       '.cache',
       'debate-review',
       `${target.owner.replace(/\//g, '__')}__${target.repo}`,
       String(target.number),
       pr.head.slice(0, 12),
-    ));
+    );
+
+    const savedPost = !printOnly && !opts.force && target.host === 'azure' ? savedAzurePost(outDir, target, pr) : null;
+    if (savedPost) {
+      try {
+        const result = postReview(target, { ...pr, postAttempt: savedPost.postAttempt }, savedPost.posted.body, savedPost.posted.comments);
+        savedPost.postResult = result;
+        log(`resumed ${savedPost.posted.comments.length} saved inline comment(s): ${result.url}`);
+        process.stdout.write(`${result.url}\n`);
+      } finally {
+        savedPost.finishedAt = new Date().toISOString();
+        fs.writeFileSync(path.join(outDir, 'run.json'), JSON.stringify(savedPost, null, 2));
+      }
+      return;
+    }
+
+    if (!opts.force && !opts.dryRun && alreadyReviewed(target, pr)) {
+      log('this head already has a debate-review; use --force to post another');
+      process.exit(3);
+    }
+
+    auth = gitAuth(target);
+    clone = findClone(target, opts, auth);
+    worktree = makeWorktree(clone, pr, pr.baseRef, auth);
+    repoDirForRoles = clone;
+  }
+
+  const baseRef = opts.local ? pr.baseSha : (opts.base || pr.baseSha);
+  const startedAt = new Date().toISOString();
 
   const runLog = {
     schema: 'debate-review.run.v1',
@@ -263,7 +324,10 @@ async function main() {
     target,
     pr,
     outDir,
-    startedAt: new Date().toISOString(),
+    printOnly,
+    force: Boolean(opts.force),
+    postAttempt: opts.force ? startedAt : undefined,
+    startedAt,
     stages: {},
   };
   const save = () => fs.writeFileSync(path.join(outDir, 'run.json'), JSON.stringify(runLog, null, 2));
@@ -354,7 +418,7 @@ async function main() {
       if (!a) { unanchored.push(f); continue; }
       let body = renderInline(f);
       if (a.snapped) body += `\n_(anchored to the nearest diff line; the finding named ${f.line_start}-${f.line_end})_\n`;
-      comments.push({ ...a, body });
+      comments.push({ ...a, body, claim: f.claim });
     }
     const body = renderBody({ who, finalDoc, posted: toPost, unanchored });
 
@@ -374,7 +438,7 @@ async function main() {
       }
       process.stdout.write(`\n(${kind}: nothing posted; artifacts in ${outDir})\n`);
     } else {
-      const result = postReview(target, pr, body, comments);
+      const result = postReview(target, { ...pr, force: opts.force, postAttempt: runLog.postAttempt }, body, comments);
       runLog.postResult = result;
       save();
       log(`posted ${comments.length} inline comment(s): ${result.url}`);

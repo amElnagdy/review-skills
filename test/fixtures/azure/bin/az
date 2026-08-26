@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Fake az for tests: answers the exact `az rest` calls forge.mjs makes with fixture files.
+# POST bodies are appended to $AZ_LOG so the test can assert what would be sent.
+F="$FIXTURES/azure"
+
+if [ "$1" = "account" ] && [ "$2" = "get-access-token" ]; then
+  echo "fake-azure-token"
+  exit 0
+fi
+
+method="GET"; url=""; body=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --method) method="$2"; shift 2 ;;
+    --url)    url="$2";    shift 2 ;;
+    --body)   body="${2#@}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ "$method" = "POST" ]; then
+  if [ "$AZ_FAIL_POST" = "1" ]; then
+    echo "fake az: requested POST failure" >&2
+    exit 1
+  fi
+  case "$url" in
+    *"/threads?"*)
+      [ -n "$AZ_LOG" ] && cat "$body" >> "$AZ_LOG" && echo >> "$AZ_LOG"
+      count=$(( $(wc -l < "$AZ_LOG" 2>/dev/null || echo 0) ))
+      echo "{\"id\": $((7000 + count))}"
+      exit 0 ;;
+  esac
+  echo "fake az: unexpected POST: $url" >&2; exit 1
+fi
+
+case "$url" in
+  *"/pullRequests/1845/threads?"*)
+    if [ "$AZ_SUMMARY_EXISTS" = "1" ]; then cat "$F/threads-with-summary.json"; else cat "$F/threads.json"; fi ;;
+  *"/pullRequests/1845/iterations/3/changes?"*'$skip=2'*) cat "$F/changes-page-2.json" ;;
+  *"/pullRequests/1845/iterations/3/changes?"*) cat "$F/changes.json" ;;
+  *"/pullRequests/1845/iterations?"*)
+    if [ "$AZ_NO_ITERATION" = "1" ]; then echo '{"count":0,"value":[]}'; else cat "$F/iterations.json"; fi ;;
+  *"/pullRequests/1845?"*)
+    if [ "$AZ_NO_TARGET" = "1" ]; then sed -e '/lastMergeSourceCommit/s/,$//' -e '/lastMergeTargetCommit/d' "$F/pr.json"; else cat "$F/pr.json"; fi ;;
+  *"/wit/workitems/4907?"*)
+    if [ "$AZ_EMPTY_WORK_ITEM" = "1" ]; then echo '{"id":4907,"fields":{"System.Title":"Title only"}}'; else cat "$F/workitem.json"; fi ;;
+  *) echo "fake az: unexpected call: $url" >&2; exit 1 ;;
+esac

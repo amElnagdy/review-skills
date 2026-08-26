@@ -8,7 +8,7 @@
 
 `debate-review` has a main reviewer read the PR, a second reviewer try to knock its findings down,
 and the main reviewer make the final call. One review with inline comments lands on the PR, posted
-from your own `gh` or `glab` account. `babysit-pr` then works the rounds: verifies each finding, fixes
+from your own `gh`, `glab`, or `az` account. `babysit-pr` then works the rounds: verifies each finding, fixes
 the blockers, replies in-thread, resolves, and re-triggers the next review. Both skills run through
 whatever coding agent you already drive (Claude Code, Codex, Cursor, OpenCode, Grok, and others) and
 the model subscriptions you already pay for.
@@ -39,14 +39,16 @@ flowchart LR
 
 | Skill | Job | Never does |
 | --- | --- | --- |
-| [`debate-review`](skills/debate-review/SKILL.md) | Reviews a GitHub PR or GitLab MR with two models in sequence and posts one `COMMENT` review with inline comments. Findings that survive the debate are posted as agreed; findings the second model refuted but the main reviewer kept are posted as contested, with both sides' reasoning. | Edit code, approve, request changes, post twice for the same head sha. |
+| [`debate-review`](skills/debate-review/SKILL.md) | Reviews a GitHub PR, GitLab MR or Azure DevOps PR with two models in sequence and posts non-approval inline comments plus a summary. Findings that survive the debate are posted as agreed; findings the second model refuted but the main reviewer kept are posted as contested, with both sides' reasoning. | Edit code, approve, request changes, post twice for the same head sha. |
 | [`babysit-pr`](skills/babysit-pr/SKILL.md) | Harvests every reviewer thread on the PR (debate-review, Codex, Greptile, any bot), checks each finding against the code, fixes what is real, replies in-thread with evidence and attribution, resolves, and re-runs the review for the next round. Reports when the PR meets the merge gate. | Merge, resolve a thread it did not answer, reply as anyone other than "model on behalf of user". |
 
 ## Requirements
 
 - Node 18 or newer.
-- `gh` (GitHub) or `glab` (GitLab, including self-hosted) logged in to an account that can comment on
-  the PR. Reviews and replies post as that account.
+- Git 2.31 or newer for Azure DevOps (`--config-env` keeps the access token out of command arguments).
+- `gh` (GitHub), `glab` (GitLab, including self-hosted) or `az` (Azure DevOps) logged in to an account
+  that can comment on the PR. Reviews and replies post as that account. Azure DevOps needs no `az`
+  extension: the script uses `az rest` against the REST API.
 - [delegate-skills](https://github.com/amElnagdy/delegate-skills), which dispatches the reviewer
   models through the `*-delegate` relays, read-only.
 - Two delegate lanes named `review-main` and `review-debate`. Create them once with `$delegate-setup`:
@@ -83,19 +85,26 @@ result, spec and standards violations quoted against the rule, and little else. 
 can only refute a finding when it can point at the code that makes it impossible. Findings below the
 confidence floor are dropped before anything is posted.
 
-## GitHub and GitLab
+## GitHub, GitLab and Azure DevOps
 
-| | GitHub | GitLab |
-| --- | --- | --- |
-| Review posting | `gh api`, PR review with inline comments | `glab api`, MR discussions with diff positions |
-| Thread harvest (babysit-pr) | GraphQL review threads + REST reviews | discussions + notes |
-| Reply and resolve (babysit-pr) | verified live | implemented, not yet verified on a live instance |
-| Bot author detection | reliable (`Bot` type) | only when the instance exposes `author.bot`; debate-review threads are found by marker either way |
+| | GitHub | GitLab | Azure DevOps |
+| --- | --- | --- | --- |
+| Review posting | `gh api`, PR review with inline comments | `glab api`, MR discussions with diff positions | `az rest`, one comment thread per finding plus a closed summary thread |
+| Target URL | `/pull/<n>` | `/-/merge_requests/<n>` | `/_git/<repo>/pullrequest/<n>`, on `dev.azure.com` or `*.visualstudio.com` |
+| Spec source (`#123`) | issue | issue | work item |
+| Alert colours | yes | 17.10+ | no, alerts fall back to plain quotes |
+| Thread harvest (babysit-pr) | GraphQL review threads + REST reviews | discussions + notes | not implemented yet |
+| Reply and resolve (babysit-pr) | verified live | implemented, not yet verified on a live instance | not implemented yet |
+| Bot author detection | reliable (`Bot` type) | only when the instance exposes `author.bot`; debate-review threads are found by marker either way | n/a |
+
+Azure DevOps has no single review object, so one debate-review is N inline threads plus one closed summary
+thread carrying the marker. `--force` and the "already reviewed" check read the same marker back off
+the PR's threads, so a re-run on an unchanged head still exits 3.
 
 ## Local preview
 
 `--local` reviews the files on disk (committed, uncommitted, and untracked, honoring `.gitignore`)
-against a base branch. It never calls `gh` or `glab`. `--dry-run` still needs a live PR; it only
+against a base branch. It never calls a forge CLI. `--dry-run` still needs a live PR; it only
 skips the post. The two flags do not combine. Local snapshots reject non-UTF-8 Git paths instead of
 silently changing their bytes.
 
@@ -141,7 +150,8 @@ node --test test/*.test.mjs
 ```
 
 The babysit tests run `threads.sh` end to end against fake `gh` and `glab` binaries in
-`test/fixtures/babysit/`, so both forge shapes are covered without network.
+`test/fixtures/babysit/`. The debate-review tests drive the Azure forge functions against a fake
+`az` in `test/fixtures/azure/`. Both suites run without network.
 
 ## License
 

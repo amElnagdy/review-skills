@@ -1,0 +1,19 @@
+{
+  "pullRequestId": 1845,
+  "title": "test: cover revenue-path gaps",
+  "description": "Closes the gaps in TEST-001 (#4907).",
+  "sourceRefName": "refs/heads/test/TEST-001-revenue-path-coverage",
+  "targetRefName": "refs/heads/dev",
+  "status": "active",
+  "repository": {
+    "name": "kultura-mobile",
+    "webUrl": "https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile"
+  },
+  "forkSource": {
+    "repository": {
+      "remoteUrl": "https://dev.azure.com/wscegy/Forks/_git/kultura-mobile-fork"
+    }
+  },
+  "lastMergeSourceCommit": { "commitId": "49793f1fec6cd58262e25752b79be791c68eb474" },
+  "lastMergeTargetCommit": { "commitId": "459026c8ad84bc296a0b44d5c3c1e4bbbbe81592" }
+}

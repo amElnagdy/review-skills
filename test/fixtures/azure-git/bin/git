@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+[ -n "$FAKE_GIT_LOG" ] && echo "$*" >> "$FAKE_GIT_LOG"
+case "$*" in
+  *"remote get-url origin")
+    echo "https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile" ;;
+  *" fetch "*)
+    exit 0 ;;
+  *" cat-file -e "*)
+    [ "$FAKE_GIT_MISSING_HEAD" = "1" ] && exit 1
+    exit 0 ;;
+  *" worktree add "*)
+    dir="${@: -2:1}"
+    mkdir -p "$dir" ;;
+  *" worktree remove "*)
+    dir="${@: -1}"
+    rm -rf "$dir" ;;
+  *" diff "*)
+    exit 0 ;;
+  *)
+    echo "fake git: unexpected call: $*" >&2
+    exit 1 ;;
+esac

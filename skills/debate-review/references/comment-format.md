@@ -1,8 +1,8 @@
 # What gets posted
 
-One review per head sha, never one per finding. The review event is `COMMENT`, so it cannot approve
-or request changes on the author's behalf. Inline comments anchor to `line_start` through `line_end`
-on the new side of the diff.
+One review run per head sha. GitHub uses a `COMMENT` review; GitLab and Azure DevOps use comment
+threads plus a summary. None can approve or request changes on the author's behalf. Inline comments
+anchor to `line_start` through `line_end` on the new side of the diff.
 
 ## Levels
 
@@ -14,8 +14,8 @@ Severity is shown on the PR as a level, computed by the script from the contract
 | P1 | any other blocking finding | `[!WARNING]` (yellow) |
 | P2 | non-blocking | `[!NOTE]` (blue) |
 
-GitHub and GitLab (17.10+) render those alert blockquotes with colour; anything else shows a plain
-quote, which still reads.
+GitHub and GitLab (17.10+) render those alert blockquotes with colour; anything else, Azure DevOps
+included, shows a plain quote, which still reads.
 
 ## Review body
 
@@ -46,6 +46,11 @@ Suggested: <recommendation>
 
 _<debate_note>_
 ```
+
+Azure DevOps prepends `<!-- debate-review finding=<content-hash> head=<sha> [attempt=<id>] -->` to
+identify threads that landed before a posting failure. A retry without `--force` resumes the exact
+saved payload from `run.json` before checkout; inline and summary threads are reused, and forced runs
+use the attempt id to avoid matching an older completed review. `--force` always starts a fresh review.
 
 A contested finding's first line reads `**<level>, contested. The second reviewer disagreed; the
 main reviewer holds it, reasons below.** <claim>`.

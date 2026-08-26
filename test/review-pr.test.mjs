@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTarget, parseOrigin } from '../skills/debate-review/scripts/lib/forge.mjs';
+import { parseTarget, parseOrigin, cloneUrl, gitAuth, fetchPR, alreadyReviewed, fetchSpec, postReview } from '../skills/debate-review/scripts/lib/forge.mjs';
 import { diffLineMap, anchor } from '../skills/debate-review/scripts/lib/diff.mjs';
 import { extractJson, expectSchema } from '../skills/debate-review/scripts/lib/dispatch.mjs';
 
@@ -19,7 +19,151 @@ test('parseTarget: github url, gitlab url, bare number via origin', () => {
   assert.deepEqual(parseTarget('12', 'git@github.com:amElnagdy/togi-app.git'),
     { host: 'github', origin: 'github.com', owner: 'amElnagdy', repo: 'togi-app', number: 12 });
   assert.equal(parseOrigin('https://gitlab.com/a/b/c.git').owner, 'a/b');
+  assert.equal(parseOrigin('git@git.example.com:2024/handbook.git').owner, '2024');
   assert.throws(() => parseTarget('nope'));
+});
+
+test('parseTarget: azure devops urls, with and without the project segment', () => {
+  const full = { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'Kultura', owner: 'wscegy/Kultura', repo: 'kultura-mobile', number: 1845 };
+  assert.deepEqual(parseTarget('https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845'), full);
+  assert.deepEqual(parseTarget('https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullRequest/1845?_a=files'), full);
+  // project omitted in the url: Azure DevOps means "the project named like the repo"
+  assert.deepEqual(parseTarget('https://dev.azure.com/wscegy/_git/tools/pullrequest/9'),
+    { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'tools', owner: 'wscegy/tools', repo: 'tools', number: 9 });
+  // legacy host, and a project name that had to be percent-encoded
+  assert.deepEqual(parseTarget('https://wscegy.visualstudio.com/My%20Team/_git/app/pullrequest/3'),
+    { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'My Team', owner: 'wscegy/My Team', repo: 'app', number: 3 });
+  assert.deepEqual(parseTarget('https://wscegy.visualstudio.com/DefaultCollection/My%20Team/_git/app/pullrequest/3'),
+    { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'My Team', owner: 'wscegy/My Team', repo: 'app', number: 3 });
+  assert.deepEqual(parseTarget('https://wscegy.visualstudio.com/DefaultCollection/_git/app/pullrequest/3'),
+    { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'app', owner: 'wscegy/app', repo: 'app', number: 3 });
+});
+
+test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) and the clone url', () => {
+  const expected = { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'Kultura', owner: 'wscegy/Kultura', repo: 'kultura-mobile' };
+  assert.deepEqual(parseOrigin('https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('git@ssh.dev.azure.com:v3/wscegy/Kultura/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('wscegy@vs-ssh.visualstudio.com:v3/wscegy/Kultura/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('ssh://wscegy@vs-ssh.visualstudio.com:22/v3/wscegy/Kultura/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('git@ssh.dev.azure.com:v3/wscegy/My%20Team/kultura-mobile'),
+    { ...expected, project: 'My Team', owner: 'wscegy/My Team' });
+  assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/Kultura/_git/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/DefaultCollection/Kultura/_git/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/DefaultCollection/_git/kultura-mobile'),
+    { ...expected, project: 'kultura-mobile', owner: 'wscegy/kultura-mobile' });
+  assert.deepEqual(parseTarget('1845', 'https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), { ...expected, number: 1845 });
+  assert.equal(cloneUrl(expected), 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile');
+  assert.equal(cloneUrl({ host: 'github', origin: 'github.com', owner: 'a', repo: 'b' }), 'https://github.com/a/b.git');
+  // a github remote must not be read as azure just because it has userinfo
+  assert.equal(parseOrigin('https://token@github.com/a/b.git').host, 'github');
+});
+
+test('azure: read the pr, spot an existing review, post threads (fake az)', () => {
+  const FIXTURES = path.join(ROOT, 'test/fixtures');
+  const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-test-')), 'posted.ndjson');
+  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG, AZ_NO_TARGET: process.env.AZ_NO_TARGET, AZ_NO_ITERATION: process.env.AZ_NO_ITERATION, AZ_EMPTY_WORK_ITEM: process.env.AZ_EMPTY_WORK_ITEM, AZ_SUMMARY_EXISTS: process.env.AZ_SUMMARY_EXISTS };
+  process.env.PATH = `${path.join(FIXTURES, 'azure/bin')}:${process.env.PATH}`;
+  process.env.FIXTURES = FIXTURES;
+  process.env.AZ_LOG = log;
+
+  try {
+    const t = parseTarget('https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845');
+    const pr = fetchPR(t);
+    assert.equal(pr.head, '49793f1fec6cd58262e25752b79be791c68eb474');
+    assert.equal(pr.baseSha, '459026c8ad84bc296a0b44d5c3c1e4bbbbe81592');
+    assert.equal(pr.iterationId, 3);
+    assert.deepEqual([pr.headRef, pr.baseRef], ['test/TEST-001-revenue-path-coverage', 'dev']);
+    assert.deepEqual([pr.fetchRef, pr.fetchRefAlt], ['refs/pull/1845/merge', 'test/TEST-001-revenue-path-coverage']);
+    assert.equal(pr.fetchUrlAlt, 'https://dev.azure.com/wscegy/Forks/_git/kultura-mobile-fork');
+    assert.equal(pr.url, 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845');
+    process.env.AZ_NO_ITERATION = '1';
+    assert.equal(fetchPR(t).iterationId, undefined);
+    delete process.env.AZ_NO_ITERATION;
+    process.env.AZ_NO_TARGET = '1';
+    assert.throws(() => fetchPR(t), /has no merge commits/);
+    delete process.env.AZ_NO_TARGET;
+
+    const auth = gitAuth(t);
+    assert.deepEqual(auth.args, [
+      '--config-env=http.https://dev.azure.com/.extraheader=DEBATE_REVIEW_AZURE_AUTH',
+      '--config-env=http.https://wscegy.visualstudio.com/.extraheader=DEBATE_REVIEW_AZURE_AUTH',
+    ]);
+    assert.equal(auth.env.DEBATE_REVIEW_AZURE_AUTH, 'AUTHORIZATION: bearer fake-azure-token');
+    const azureHeader = spawnSync('git', [...auth.args, 'config', '--get-urlmatch',
+      'http.extraheader', 'https://dev.azure.com/wscegy/repo'], { encoding: 'utf8', env: auth.env, cwd: os.tmpdir() });
+    const otherHeader = spawnSync('git', [...auth.args, 'config', '--get-urlmatch',
+      'http.extraheader', 'https://example.invalid/repo'], { encoding: 'utf8', env: auth.env, cwd: os.tmpdir() });
+    const legacyHeader = spawnSync('git', [...auth.args, 'config', '--get-urlmatch',
+      'http.extraheader', 'https://wscegy.visualstudio.com/Kultura/_git/repo'],
+      { encoding: 'utf8', env: auth.env, cwd: os.tmpdir() });
+    assert.equal(azureHeader.stdout.trim(), 'AUTHORIZATION: bearer fake-azure-token');
+    assert.equal(legacyHeader.stdout.trim(), 'AUTHORIZATION: bearer fake-azure-token');
+    assert.equal(otherHeader.stdout.trim(), '');
+
+    // the fixture carries a marker for a different head sha
+    assert.equal(alreadyReviewed(t, pr), false);
+    assert.equal(alreadyReviewed(t, { head: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' }), true);
+
+    // "#4907" is a work item on azure, and its html description is flattened
+    const spec = fetchSpec(t, pr, '');
+    assert.ok(spec.includes('Work item #4907: TEST-001 revenue path coverage'));
+    assert.ok(spec.includes('Cover the revenue path.') && !spec.includes('<b>'));
+    assert.ok(spec.includes('Pagination & payment.'));
+    process.env.AZ_EMPTY_WORK_ITEM = '1';
+    assert.equal(fetchSpec(t, pr, ''), 'none found, skip the Spec axis');
+    delete process.env.AZ_EMPTY_WORK_ITEM;
+
+    const result = postReview(t, pr, 'summary body', [
+      { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=agreed -->\none' },
+      { path: 'lib/b.dart', line: 40, start_line: 38, claim: 'two', body: '<!-- debate-review:F2 status=agreed -->\ntwo' },
+      { path: 'lib/missing.dart', line: 8, claim: 'three', body: '<!-- debate-review:F3 status=agreed -->\nthree' },
+    ]);
+    assert.equal(result.threadIds.length, 3);
+    assert.equal(result.threadIds[0], 7020);              // existing F1 thread was reused
+    assert.equal(result.url, pr.url);
+
+    const posted = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    assert.equal(posted.length, 3);                       // existing F1 skipped; F2, F3, then summary
+    assert.equal(posted[0].threadContext.filePath, '/lib/b.dart');
+    assert.deepEqual(posted[0].threadContext.rightFileStart, { line: 38, offset: 1 });
+    assert.deepEqual(posted[0].threadContext.rightFileEnd, { line: 40, offset: 1 });
+    assert.match(posted[0].comments[0].content,
+      /^<!-- debate-review finding=[0-9a-f]{16} head=49793f1f/);
+    assert.deepEqual(posted[0].pullRequestThreadContext, {
+      changeTrackingId: 12,
+      iterationContext: { firstComparingIteration: 3, secondComparingIteration: 3 },
+    });
+    assert.equal(posted[1].threadContext.filePath, '/lib/missing.dart');
+    assert.equal(posted[1].pullRequestThreadContext, undefined);
+    assert.equal(posted[2].threadContext, undefined);     // the summary is not anchored to a file
+    assert.equal(posted[2].comments[0].content, 'summary body');
+    assert.equal(posted[2].status, 'closed');
+
+    const forcedBody = `<!-- debate-review head=${pr.head} main=claude -->\nforced summary`;
+    postReview(t, { ...pr, force: true, postAttempt: 'forced-test' }, forcedBody, [
+      { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=contested -->\nupdated' },
+    ]);
+    const forced = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    assert.equal(forced.length, 5);                       // force adds a fresh inline plus summary
+    assert.match(forced[3].comments[0].content, /attempt=forced-test/);
+    assert.match(forced[3].comments[0].content, /updated$/);
+    assert.match(forced[4].comments[0].content, /head=.* attempt=forced-test main=claude/);
+
+    process.env.AZ_SUMMARY_EXISTS = '1';
+    const resumed = postReview(t, { ...pr, postAttempt: 'forced-test' }, forcedBody, [
+      { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=contested -->\nupdated' },
+    ]);
+    assert.deepEqual([resumed.threadIds[0], resumed.summaryThreadId], [7021, 7022]);
+    assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 5);
+
+    const plain = postReview(t, pr, `<!-- debate-review head=${pr.head} main=claude -->\nplain summary`, []);
+    delete process.env.AZ_SUMMARY_EXISTS;
+    assert.notEqual(plain.summaryThreadId, 7022);
+    assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 6);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+    fs.rmSync(path.dirname(log), { recursive: true, force: true });
+  }
 });
 
 test('parseTarget/parseOrigin: GitHub Enterprise hosts are github, not gitlab', () => {
@@ -98,6 +242,108 @@ test('review-pr: --local --repo-dir non-repo exits 1 after parsing', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /not a git work tree/);
   fs.rmSync(missing, { recursive: true, force: true });
+});
+
+test('review-pr: Azure repo-dir rejects a same-named GitLab clone', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-forge-mismatch-'));
+  const bins = [path.join(ROOT, 'test/fixtures/forge/bin'), path.join(ROOT, 'test/fixtures/azure/bin')];
+  const env = { ...process.env, PATH: `${bins.join(':')}:${process.env.PATH}`, FIXTURES: path.join(ROOT, 'test/fixtures') };
+  try {
+    spawnSync('git', ['init', '-b', 'main', dir], { encoding: 'utf8' });
+    spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://git.example.com/wscegy/Kultura/kultura-mobile.git']);
+    const result = spawnSync('node', [script,
+      'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845',
+      '--dry-run', '--repo-dir', dir], { encoding: 'utf8', env });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /origin does not match/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('review-pr: Azure resumes an interrupted post from the saved payload', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-resume-repo-'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-resume-out-'));
+  const forceOut = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-force-out-'));
+  const log = path.join(out, 'posted.ndjson');
+  const gitLog = path.join(out, 'git.ndjson');
+  const forceGitLog = path.join(forceOut, 'git.ndjson');
+  const target = { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'Kultura', owner: 'wscegy/Kultura', repo: 'kultura-mobile', number: 1845 };
+  const head = '49793f1fec6cd58262e25752b79be791c68eb474';
+  const savedRun = {
+    schema: 'debate-review.run.v1',
+    printOnly: false,
+    force: true,
+    postAttempt: 'forced-test',
+    target,
+    pr: { head },
+    posted: {
+      body: `<!-- debate-review head=${head} main=claude -->\nsummary`,
+      comments: [{ path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=agreed -->\none' }],
+    },
+  };
+  fs.writeFileSync(path.join(out, 'run.json'), JSON.stringify(savedRun));
+  fs.writeFileSync(path.join(forceOut, 'run.json'), JSON.stringify(savedRun));
+  const bins = [path.join(ROOT, 'test/fixtures/azure-git/bin'), path.join(ROOT, 'test/fixtures/azure/bin')];
+  const env = {
+    ...process.env,
+    PATH: `${bins.join(':')}:${process.env.PATH}`,
+    FIXTURES: path.join(ROOT, 'test/fixtures'),
+    AZ_LOG: log,
+    FAKE_GIT_LOG: gitLog,
+    FAKE_GIT_MISSING_HEAD: '1',
+  };
+  try {
+    const url = 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845';
+    const forced = spawnSync('node', [script, url, '--repo-dir', repo, '--out-dir', forceOut, '--force'], {
+      encoding: 'utf8', env: { ...env, FAKE_GIT_LOG: forceGitLog },
+    });
+    assert.equal(forced.status, 1);
+    assert.doesNotMatch(forced.stderr, /resumed/);
+    const forceGitCalls = fs.readFileSync(forceGitLog, 'utf8');
+    assert.match(forceGitCalls, / fetch /);
+    assert.doesNotMatch(forceGitCalls, /--config-env=.*(?:cat-file|worktree|diff|log)/);
+
+    const args = [script, url, '--repo-dir', repo, '--out-dir', out];
+    const failed = spawnSync('node', args, { encoding: 'utf8', env: { ...env, AZ_FAIL_POST: '1' } });
+    assert.equal(failed.status, 1);
+    assert.ok(JSON.parse(fs.readFileSync(path.join(out, 'run.json'))).posted);
+
+    const result = spawnSync('node', args, { encoding: 'utf8', env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /resumed 1 saved inline comment/);
+    const posted = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(posted.length, 1);                       // existing inline reused; summary completed
+    assert.equal(posted[0].status, 'closed');
+    assert.doesNotMatch(fs.readFileSync(gitLog, 'utf8'), / fetch |worktree/);
+    assert.ok(JSON.parse(fs.readFileSync(path.join(out, 'run.json'))).postResult);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(out, { recursive: true, force: true });
+    fs.rmSync(forceOut, { recursive: true, force: true });
+  }
+});
+
+test('review-pr: a corrupt Azure run log falls back to a normal review', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-corrupt-repo-'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-corrupt-out-'));
+  fs.writeFileSync(path.join(out, 'run.json'), '{');
+  const bins = [path.join(ROOT, 'test/fixtures/azure-git/bin'), path.join(ROOT, 'test/fixtures/azure/bin')];
+  const env = { ...process.env, PATH: `${bins.join(':')}:${process.env.PATH}`, FIXTURES: path.join(ROOT, 'test/fixtures') };
+  try {
+    const result = spawnSync('node', [script,
+      'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845',
+      '--repo-dir', repo, '--out-dir', out], { encoding: 'utf8', env });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /empty diff/);
+    assert.doesNotMatch(result.stderr, /JSON|Unexpected end/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(out, { recursive: true, force: true });
+  }
 });
 
 test('review-pr: --local removes the snapshot if --out-dir cannot be created', () => {

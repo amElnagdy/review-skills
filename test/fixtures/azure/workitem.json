@@ -1,0 +1,8 @@
+{
+  "id": 4907,
+  "fields": {
+    "System.Title": "TEST-001 revenue path coverage",
+    "Microsoft.VSTS.TCM.ReproSteps": "<div>Cover the <b>revenue</b> path.</div><p>Pagination &amp; payment.</p>"
+  },
+  "_links": { "html": { "href": "https://dev.azure.com/wscegy/Kultura/_workitems/edit/4907" } }
+}
