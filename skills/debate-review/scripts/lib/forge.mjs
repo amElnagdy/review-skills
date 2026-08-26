@@ -137,7 +137,10 @@ export function gitAuth(t) {
   const token = text('az', ['account', 'get-access-token', '--resource', AZURE_RESOURCE,
     '--query', 'accessToken', '--output', 'tsv']);
   return {
-    args: ['--config-env=http.https://dev.azure.com/.extraheader=DEBATE_REVIEW_AZURE_AUTH'],
+    args: [
+      '--config-env=http.https://dev.azure.com/.extraheader=DEBATE_REVIEW_AZURE_AUTH',
+      `--config-env=http.https://${t.org}.visualstudio.com/.extraheader=DEBATE_REVIEW_AZURE_AUTH`,
+    ],
     env: { ...process.env, DEBATE_REVIEW_AZURE_AUTH: `AUTHORIZATION: bearer ${token}` },
   };
 }
