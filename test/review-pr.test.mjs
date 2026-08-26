@@ -61,7 +61,7 @@ test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) an
 test('azure: read the pr, spot an existing review, post threads (fake az)', () => {
   const FIXTURES = path.join(ROOT, 'test/fixtures');
   const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-test-')), 'posted.ndjson');
-  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG, AZ_NO_TARGET: process.env.AZ_NO_TARGET, AZ_SUMMARY_EXISTS: process.env.AZ_SUMMARY_EXISTS };
+  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG, AZ_NO_TARGET: process.env.AZ_NO_TARGET, AZ_NO_ITERATION: process.env.AZ_NO_ITERATION, AZ_SUMMARY_EXISTS: process.env.AZ_SUMMARY_EXISTS };
   process.env.PATH = `${path.join(FIXTURES, 'azure/bin')}:${process.env.PATH}`;
   process.env.FIXTURES = FIXTURES;
   process.env.AZ_LOG = log;
@@ -76,6 +76,9 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.deepEqual([pr.fetchRef, pr.fetchRefAlt], ['refs/pull/1845/merge', 'test/TEST-001-revenue-path-coverage']);
     assert.equal(pr.fetchUrlAlt, 'https://dev.azure.com/wscegy/Forks/_git/kultura-mobile-fork');
     assert.equal(pr.url, 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845');
+    process.env.AZ_NO_ITERATION = '1';
+    assert.equal(fetchPR(t).iterationId, undefined);
+    delete process.env.AZ_NO_ITERATION;
     process.env.AZ_NO_TARGET = '1';
     assert.throws(() => fetchPR(t), /has no merge commits/);
     delete process.env.AZ_NO_TARGET;

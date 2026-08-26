@@ -38,7 +38,8 @@ case "$url" in
     if [ "$AZ_SUMMARY_EXISTS" = "1" ]; then cat "$F/threads-with-summary.json"; else cat "$F/threads.json"; fi ;;
   *"/pullRequests/1845/iterations/3/changes?"*'$skip=2'*) cat "$F/changes-page-2.json" ;;
   *"/pullRequests/1845/iterations/3/changes?"*) cat "$F/changes.json" ;;
-  *"/pullRequests/1845/iterations?"*) cat "$F/iterations.json" ;;
+  *"/pullRequests/1845/iterations?"*)
+    if [ "$AZ_NO_ITERATION" = "1" ]; then echo '{"count":0,"value":[]}'; else cat "$F/iterations.json"; fi ;;
   *"/pullRequests/1845?"*)
     if [ "$AZ_NO_TARGET" = "1" ]; then sed -e '/lastMergeSourceCommit/s/,$//' -e '/lastMergeTargetCommit/d' "$F/pr.json"; else cat "$F/pr.json"; fi ;;
   *"/wit/workitems/4907?"*)        cat "$F/workitem.json" ;;

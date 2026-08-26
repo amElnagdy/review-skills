@@ -226,7 +226,6 @@ export function fetchPR(t) {
     if (!head || !baseSha) throw new Error(`PR ${t.number} has no merge commits; Azure DevOps has not computed its merge yet`);
     const iterations = azureRest(azureRepoApi(t, `/pullRequests/${t.number}/iterations?includeCommits=true`));
     const iteration = (iterations.value || []).filter(entry => entry.sourceRefCommit?.commitId === head).at(-1);
-    if (!iteration) throw new Error(`Azure DevOps has no PR iteration for reviewed head ${head}`);
     return {
       title: pr.title,
       body: pr.description || '',
@@ -235,7 +234,7 @@ export function fetchPR(t) {
       headRef: shortRef(pr.sourceRefName),
       baseRef: shortRef(pr.targetRefName),
       baseSha,
-      iterationId: iteration.id,
+      iterationId: iteration?.id,
       // The merge ref carries the head as a parent and exists even for a fork PR; the source branch
       // is the fallback for a PR whose merge could not be computed (conflicts).
       fetchRef: `refs/pull/${t.number}/merge`,
@@ -379,7 +378,7 @@ function postGitlab(t, pr, body, comments) {
 function postAzure(t, pr, body, comments) {
   const url = azureRepoApi(t, `/pullRequests/${t.number}/threads`);
   const existingThreads = !pr.force ? azureRest(url).value || [] : [];
-  const changes = comments.length ? azureIterationChanges(t, pr) : [];
+  const changes = comments.length && pr.iterationId ? azureIterationChanges(t, pr) : [];
   const changeIds = new Map(changes.map(change => [change.item?.path, change.changeTrackingId]));
   const threadIds = [];
 
