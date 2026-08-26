@@ -388,7 +388,7 @@ function postAzure(t, pr, body, comments) {
     const fingerprint = createHash('sha256')
       .update(JSON.stringify([filePath, c.start_line || c.line, c.line, c.claim]))
       .digest('hex').slice(0, 16);
-    const marker = `<!-- debate-review finding=${fingerprint} head=${pr.head} -->`;
+    const marker = `<!-- debate-review finding=${fingerprint} head=${pr.head}${pr.postAttempt ? ` attempt=${pr.postAttempt}` : ''} -->`;
     const existing = existingThreads.find(thread =>
       thread.comments?.some(comment => String(comment.content).includes(marker)));
     if (existing) {

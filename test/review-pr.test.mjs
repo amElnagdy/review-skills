@@ -132,11 +132,12 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.equal(posted[2].comments[0].content, 'summary body');
     assert.equal(posted[2].status, 'closed');
 
-    postReview(t, { ...pr, force: true }, 'forced summary', [
+    postReview(t, { ...pr, force: true, postAttempt: 'forced-test' }, 'forced summary', [
       { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=contested -->\nupdated' },
     ]);
     const forced = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
     assert.equal(forced.length, 5);                       // force adds a fresh inline plus summary
+    assert.match(forced[3].comments[0].content, /attempt=forced-test/);
     assert.match(forced[3].comments[0].content, /updated$/);
   } finally {
     for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
@@ -251,6 +252,8 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
   fs.writeFileSync(path.join(out, 'run.json'), JSON.stringify({
     schema: 'debate-review.run.v1',
     printOnly: false,
+    force: true,
+    postAttempt: 'forced-test',
     target,
     pr: { head },
     posted: {
@@ -270,7 +273,7 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
   try {
     const args = [script,
       'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845',
-      '--repo-dir', repo, '--out-dir', out];
+      '--repo-dir', repo, '--out-dir', out, '--force'];
     const failed = spawnSync('node', args, { encoding: 'utf8', env: { ...env, AZ_FAIL_POST: '1' } });
     assert.equal(failed.status, 1);
     assert.ok(JSON.parse(fs.readFileSync(path.join(out, 'run.json'))).posted);
@@ -281,8 +284,7 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
     const posted = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.equal(posted.length, 1);                       // existing inline reused; summary completed
     assert.equal(posted[0].status, 'closed');
-    assert.match(fs.readFileSync(gitLog, 'utf8'),
-      /fetch --quiet https:\/\/dev\.azure\.com\/wscegy\/Forks\/_git\/kultura-mobile-fork test\/TEST-001/);
+    assert.doesNotMatch(fs.readFileSync(gitLog, 'utf8'), / fetch |worktree/);
     assert.ok(JSON.parse(fs.readFileSync(path.join(out, 'run.json'))).postResult);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });

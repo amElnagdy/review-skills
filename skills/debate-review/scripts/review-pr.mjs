@@ -250,6 +250,7 @@ async function main() {
   let pr;
   let clone;
   let worktree;
+  let outDir;
   let localSnapshot = null;
   let repoDirForRoles;
   let auth = { args: [], env: process.env };
@@ -264,11 +265,42 @@ async function main() {
     pr = localSnapshot.pr;
     worktree = localSnapshot.dir;
     clone = localSnapshot.dir;
+    outDir = opts.outDir || path.join(
+      os.homedir(),
+      '.cache',
+      'debate-review',
+      'local',
+      path.basename(repoDirForRoles),
+      pr.headRef.replace(/\//g, '__'),
+      pr.head.slice(0, 12),
+    );
     log(`local ${path.basename(repoDirForRoles)} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
   } else {
     target = parseTarget(opts.target, currentOrigin());
     pr = fetchPR(target);
     log(`${projectPath(target)}#${target.number} @ ${pr.head.slice(0, 10)} (${pr.headRef} → ${pr.baseRef})`);
+    outDir = opts.outDir || path.join(
+      os.homedir(),
+      '.cache',
+      'debate-review',
+      `${target.owner.replace(/\//g, '__')}__${target.repo}`,
+      String(target.number),
+      pr.head.slice(0, 12),
+    );
+
+    const savedPost = !printOnly && target.host === 'azure' ? savedAzurePost(outDir, target, pr) : null;
+    if (savedPost) {
+      try {
+        const result = postReview(target, { ...pr, postAttempt: savedPost.postAttempt }, savedPost.posted.body, savedPost.posted.comments);
+        savedPost.postResult = result;
+        log(`resumed ${savedPost.posted.comments.length} saved inline comment(s): ${result.url}`);
+        process.stdout.write(`${result.url}\n`);
+      } finally {
+        savedPost.finishedAt = new Date().toISOString();
+        fs.writeFileSync(path.join(outDir, 'run.json'), JSON.stringify(savedPost, null, 2));
+      }
+      return;
+    }
 
     if (!opts.force && !opts.dryRun && alreadyReviewed(target, pr)) {
       log('this head already has a debate-review; use --force to post another');
@@ -282,25 +314,7 @@ async function main() {
   }
 
   const baseRef = opts.local ? pr.baseSha : (opts.base || pr.baseSha);
-
-  const outDir = opts.outDir || (opts.local
-    ? path.join(
-      os.homedir(),
-      '.cache',
-      'debate-review',
-      'local',
-      path.basename(repoDirForRoles),
-      pr.headRef.replace(/\//g, '__'),
-      pr.head.slice(0, 12),
-    )
-    : path.join(
-      os.homedir(),
-      '.cache',
-      'debate-review',
-      `${target.owner.replace(/\//g, '__')}__${target.repo}`,
-      String(target.number),
-      pr.head.slice(0, 12),
-    ));
+  const startedAt = new Date().toISOString();
 
   const runLog = {
     schema: 'debate-review.run.v1',
@@ -313,25 +327,15 @@ async function main() {
     pr,
     outDir,
     printOnly,
-    startedAt: new Date().toISOString(),
+    force: Boolean(opts.force),
+    postAttempt: opts.force ? startedAt : undefined,
+    startedAt,
     stages: {},
   };
   const save = () => fs.writeFileSync(path.join(outDir, 'run.json'), JSON.stringify(runLog, null, 2));
 
   try {
     fs.mkdirSync(outDir, { recursive: true });
-    const savedPost = !printOnly && !opts.force && target.host === 'azure'
-      ? savedAzurePost(outDir, target, pr)
-      : null;
-    if (savedPost) {
-      Object.assign(runLog, savedPost);
-      const result = postReview(target, pr, savedPost.posted.body, savedPost.posted.comments);
-      runLog.postResult = result;
-      log(`resumed ${savedPost.posted.comments.length} saved inline comment(s): ${result.url}`);
-      process.stdout.write(`${result.url}\n`);
-      return;
-    }
-
     const diff = text('git', [...auth.args, '-C', worktree, 'diff', `${baseRef}...HEAD`], { env: auth.env });
     if (!diff.trim()) throw new Error('empty diff, nothing to review');
     const commits = text('git', [...auth.args, '-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline'],
@@ -437,7 +441,7 @@ async function main() {
       }
       process.stdout.write(`\n(${kind}: nothing posted; artifacts in ${outDir})\n`);
     } else {
-      const result = postReview(target, { ...pr, force: opts.force }, body, comments);
+      const result = postReview(target, { ...pr, force: opts.force, postAttempt: runLog.postAttempt }, body, comments);
       runLog.postResult = result;
       save();
       log(`posted ${comments.length} inline comment(s): ${result.url}`);
