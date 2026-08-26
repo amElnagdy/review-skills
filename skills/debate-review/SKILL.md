@@ -50,9 +50,9 @@ and the script fills them in; you don't need to read them.
 
 ## After it posts
 
-Each posted comment carries a `<!-- debate-review:<id> status=... -->` marker. `babysit-pr` recognises
-the marker and handles the round like any other bot round (verify, fix blockers, reply in the thread,
-resolve). Don't act on the findings yourself unless the user asks.
+Each posted comment carries a `<!-- debate-review:<id> status=... -->` marker. `babysit-pr` handles
+GitHub and GitLab rounds (verify, fix blockers, reply, resolve). It cannot harvest Azure DevOps yet,
+so relay Azure findings directly to the user. Don't act on the findings yourself unless asked.
 
 ## Artifacts
 

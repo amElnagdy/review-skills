@@ -42,6 +42,7 @@ case "$url" in
     if [ "$AZ_NO_ITERATION" = "1" ]; then echo '{"count":0,"value":[]}'; else cat "$F/iterations.json"; fi ;;
   *"/pullRequests/1845?"*)
     if [ "$AZ_NO_TARGET" = "1" ]; then sed -e '/lastMergeSourceCommit/s/,$//' -e '/lastMergeTargetCommit/d' "$F/pr.json"; else cat "$F/pr.json"; fi ;;
-  *"/wit/workitems/4907?"*)        cat "$F/workitem.json" ;;
+  *"/wit/workitems/4907?"*)
+    if [ "$AZ_EMPTY_WORK_ITEM" = "1" ]; then echo '{"id":4907,"fields":{"System.Title":"Title only"}}'; else cat "$F/workitem.json"; fi ;;
   *) echo "fake az: unexpected call: $url" >&2; exit 1 ;;
 esac

@@ -61,7 +61,7 @@ test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) an
 test('azure: read the pr, spot an existing review, post threads (fake az)', () => {
   const FIXTURES = path.join(ROOT, 'test/fixtures');
   const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-test-')), 'posted.ndjson');
-  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG, AZ_NO_TARGET: process.env.AZ_NO_TARGET, AZ_NO_ITERATION: process.env.AZ_NO_ITERATION, AZ_SUMMARY_EXISTS: process.env.AZ_SUMMARY_EXISTS };
+  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG, AZ_NO_TARGET: process.env.AZ_NO_TARGET, AZ_NO_ITERATION: process.env.AZ_NO_ITERATION, AZ_EMPTY_WORK_ITEM: process.env.AZ_EMPTY_WORK_ITEM, AZ_SUMMARY_EXISTS: process.env.AZ_SUMMARY_EXISTS };
   process.env.PATH = `${path.join(FIXTURES, 'azure/bin')}:${process.env.PATH}`;
   process.env.FIXTURES = FIXTURES;
   process.env.AZ_LOG = log;
@@ -109,6 +109,9 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.ok(spec.includes('Work item #4907: TEST-001 revenue path coverage'));
     assert.ok(spec.includes('Cover the revenue path.') && !spec.includes('<b>'));
     assert.ok(spec.includes('Pagination & payment.'));
+    process.env.AZ_EMPTY_WORK_ITEM = '1';
+    assert.equal(fetchSpec(t, pr, ''), 'none found, skip the Spec axis');
+    delete process.env.AZ_EMPTY_WORK_ITEM;
 
     const result = postReview(t, pr, 'summary body', [
       { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=agreed -->\none' },

@@ -288,7 +288,8 @@ export function fetchSpec(t, pr, commitsText) {
         const item = azureRest(`${azureProjectUrl(t)}/_apis/wit/workitems/${n}`);
         const fields = item.fields || {};
         const url = item._links?.html?.href || `${azureProjectUrl(t)}/_workitems/edit/${n}`;
-        parts.push(`Work item #${n}: ${fields['System.Title'] || ''}\n${url}\n${stripHtml(fields['System.Description'])}`);
+        const body = stripHtml(fields['System.Description'] || fields['Microsoft.VSTS.TCM.ReproSteps']);
+        if (body) parts.push(`Work item #${n}: ${fields['System.Title'] || ''}\n${url}\n${body}`);
       } else {
         const issue = json('glab', ['api', `projects/${glabProject(t)}/issues/${n}`], { env: glabEnv(t) });
         parts.push(`Issue #${n}: ${issue.title}\n${issue.web_url}\n${issue.description || ''}`);
