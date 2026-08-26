@@ -40,6 +40,9 @@ node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
   `--main <implementer>` or `--debate <implementer>`. Only implementers whose relay has `--read-only`
   are accepted. These two lanes belong to the reviewer. Don't point them at a lane you use for other
   work, such as a plan-debate lane.
+- Reviewer relays are capability-probed for an isolated mode. Codex reviewers use
+  `--ignore-user-config` so unrelated user/project MCP authentication cannot abort the review;
+  OpenCode reviewers use `--pure`. Older relays still run read-only with a warning.
 - Exit code `3` means this head sha already has a debate-review. Re-run with `--force` to post again.
 - A run takes minutes, since it is two or three implementer sessions back to back. Run it in the
   background and report the printed URL when it finishes. Don't poll tightly.
