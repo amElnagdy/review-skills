@@ -31,7 +31,7 @@ export function parseTarget(target, originUrl) {
   const vsts = target.match(/^https?:\/\/(?:[^@/]+@)?([^./]+)\.visualstudio\.com\/(?:(?:[^/?#]+\/)?([^/?#]+)\/)?_git\/([^/?#]+)\/pullrequest\/(\d+)/i);
   if (vsts) {
     const repo = decodeURIComponent(vsts[3]);
-    return azureTarget(vsts[1], vsts[2] ? decodeURIComponent(vsts[2]) : repo, repo, Number(vsts[4]));
+    return azureTarget(vsts[1], legacyAzureProject(vsts[2], repo), repo, Number(vsts[4]));
   }
 
   const github = target.match(/^https?:\/\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.git)?\/pull\/(\d+)/);
@@ -53,6 +53,11 @@ export function parseTarget(target, originUrl) {
 function azureTarget(org, project, repo, number) {
   const t = { host: 'azure', origin: 'dev.azure.com', org, project, owner: `${org}/${project}`, repo };
   return number === undefined ? t : { ...t, number };
+}
+
+function legacyAzureProject(segment, repo) {
+  const project = segment ? decodeURIComponent(segment) : repo;
+  return project.toLowerCase() === 'defaultcollection' ? repo : project;
 }
 
 /** Parse a git remote URL (https or ssh) into { host, origin, owner, repo }. */
@@ -93,7 +98,7 @@ function azureOrigin(origin, segments) {
     const git = segments.indexOf('_git');
     if (git < 0 || git !== segments.length - 2) return null;
     const repo = decodeURIComponent(segments[git + 1]);
-    return azureTarget(origin.split('.')[0], git >= 1 ? decodeURIComponent(segments[git - 1]) : repo, repo);
+    return azureTarget(origin.split('.')[0], legacyAzureProject(segments[git - 1], repo), repo);
   }
 
   return null;
@@ -215,10 +220,9 @@ export function fetchPR(t) {
 
   if (t.host === 'azure') {
     const pr = azureRest(azureRepoApi(t, `/pullRequests/${t.number}`));
-    if (!pr.lastMergeSourceCommit) {
-      throw new Error(`PR ${t.number} has no lastMergeSourceCommit; Azure DevOps has not computed its merge yet`);
-    }
-    const head = pr.lastMergeSourceCommit.commitId;
+    const head = pr.lastMergeSourceCommit?.commitId;
+    const baseSha = pr.lastMergeTargetCommit?.commitId;
+    if (!head || !baseSha) throw new Error(`PR ${t.number} has no merge commits; Azure DevOps has not computed its merge yet`);
     const iterations = azureRest(azureRepoApi(t, `/pullRequests/${t.number}/iterations?includeCommits=true`));
     const iteration = (iterations.value || []).filter(entry => entry.sourceRefCommit?.commitId === head).at(-1);
     if (!iteration) throw new Error(`Azure DevOps has no PR iteration for reviewed head ${head}`);
@@ -229,7 +233,7 @@ export function fetchPR(t) {
       head,
       headRef: shortRef(pr.sourceRefName),
       baseRef: shortRef(pr.targetRefName),
-      baseSha: pr.lastMergeTargetCommit?.commitId,
+      baseSha,
       iterationId: iteration.id,
       // The merge ref carries the head as a parent and exists even for a fork PR; the source branch
       // is the fallback for a PR whose merge could not be computed (conflicts).

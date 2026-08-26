@@ -34,6 +34,8 @@ test('parseTarget: azure devops urls, with and without the project segment', () 
     { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'My Team', owner: 'wscegy/My Team', repo: 'app', number: 3 });
   assert.deepEqual(parseTarget('https://wscegy.visualstudio.com/DefaultCollection/My%20Team/_git/app/pullrequest/3'),
     { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'My Team', owner: 'wscegy/My Team', repo: 'app', number: 3 });
+  assert.deepEqual(parseTarget('https://wscegy.visualstudio.com/DefaultCollection/_git/app/pullrequest/3'),
+    { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'app', owner: 'wscegy/app', repo: 'app', number: 3 });
 });
 
 test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) and the clone url', () => {
@@ -46,6 +48,8 @@ test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) an
     { ...expected, project: 'My Team', owner: 'wscegy/My Team' });
   assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/Kultura/_git/kultura-mobile'), expected);
   assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/DefaultCollection/Kultura/_git/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/DefaultCollection/_git/kultura-mobile'),
+    { ...expected, project: 'kultura-mobile', owner: 'wscegy/kultura-mobile' });
   assert.deepEqual(parseTarget('1845', 'https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), { ...expected, number: 1845 });
   assert.equal(cloneUrl(expected), 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile');
   assert.equal(cloneUrl({ host: 'github', origin: 'github.com', owner: 'a', repo: 'b' }), 'https://github.com/a/b.git');
@@ -56,7 +60,7 @@ test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) an
 test('azure: read the pr, spot an existing review, post threads (fake az)', () => {
   const FIXTURES = path.join(ROOT, 'test/fixtures');
   const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-test-')), 'posted.ndjson');
-  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG };
+  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG, AZ_NO_TARGET: process.env.AZ_NO_TARGET };
   process.env.PATH = `${path.join(FIXTURES, 'azure/bin')}:${process.env.PATH}`;
   process.env.FIXTURES = FIXTURES;
   process.env.AZ_LOG = log;
@@ -71,6 +75,9 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.deepEqual([pr.fetchRef, pr.fetchRefAlt], ['refs/pull/1845/merge', 'test/TEST-001-revenue-path-coverage']);
     assert.equal(pr.fetchUrlAlt, 'https://dev.azure.com/wscegy/Forks/_git/kultura-mobile-fork');
     assert.equal(pr.url, 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845');
+    process.env.AZ_NO_TARGET = '1';
+    assert.throws(() => fetchPR(t), /has no merge commits/);
+    delete process.env.AZ_NO_TARGET;
 
     const auth = gitAuth(t);
     assert.deepEqual(auth.args, [
