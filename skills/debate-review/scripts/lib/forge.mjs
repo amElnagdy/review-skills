@@ -28,7 +28,7 @@ export function parseTarget(target, originUrl) {
   }
 
   // https://<org>.visualstudio.com/<project>/_git/<repo>/pullrequest/<id>  (legacy host, same API)
-  const vsts = target.match(/^https?:\/\/(?:[^@/]+@)?([^./]+)\.visualstudio\.com\/(?:([^/?#]+)\/)?_git\/([^/?#]+)\/pullrequest\/(\d+)/i);
+  const vsts = target.match(/^https?:\/\/(?:[^@/]+@)?([^./]+)\.visualstudio\.com\/(?:(?:[^/?#]+\/)?([^/?#]+)\/)?_git\/([^/?#]+)\/pullrequest\/(\d+)/i);
   if (vsts) {
     const repo = decodeURIComponent(vsts[3]);
     return azureTarget(vsts[1], vsts[2] ? decodeURIComponent(vsts[2]) : repo, repo, Number(vsts[4]));

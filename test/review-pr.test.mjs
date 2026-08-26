@@ -32,6 +32,8 @@ test('parseTarget: azure devops urls, with and without the project segment', () 
   // legacy host, and a project name that had to be percent-encoded
   assert.deepEqual(parseTarget('https://wscegy.visualstudio.com/My%20Team/_git/app/pullrequest/3'),
     { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'My Team', owner: 'wscegy/My Team', repo: 'app', number: 3 });
+  assert.deepEqual(parseTarget('https://wscegy.visualstudio.com/DefaultCollection/My%20Team/_git/app/pullrequest/3'),
+    { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'My Team', owner: 'wscegy/My Team', repo: 'app', number: 3 });
 });
 
 test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) and the clone url', () => {
