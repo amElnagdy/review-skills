@@ -49,7 +49,8 @@ _<debate_note>_
 
 Azure DevOps prepends `<!-- debate-review finding=<content-hash> head=<sha> [attempt=<id>] -->` to
 identify threads that landed before a posting failure. The retry resumes the exact saved payload from
-`run.json` before checkout; forced runs use the attempt id to avoid matching an older completed review.
+`run.json` before checkout; inline and summary threads are reused, and forced runs use the attempt id
+to avoid matching an older completed review.
 
 A contested finding's first line reads `**<level>, contested. The second reviewer disagreed; the
 main reviewer holds it, reasons below.** <claim>`.

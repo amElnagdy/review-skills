@@ -60,7 +60,7 @@ test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) an
 test('azure: read the pr, spot an existing review, post threads (fake az)', () => {
   const FIXTURES = path.join(ROOT, 'test/fixtures');
   const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-test-')), 'posted.ndjson');
-  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG, AZ_NO_TARGET: process.env.AZ_NO_TARGET };
+  const saved = { PATH: process.env.PATH, FIXTURES: process.env.FIXTURES, AZ_LOG: process.env.AZ_LOG, AZ_NO_TARGET: process.env.AZ_NO_TARGET, AZ_SUMMARY_EXISTS: process.env.AZ_SUMMARY_EXISTS };
   process.env.PATH = `${path.join(FIXTURES, 'azure/bin')}:${process.env.PATH}`;
   process.env.FIXTURES = FIXTURES;
   process.env.AZ_LOG = log;
@@ -132,13 +132,23 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.equal(posted[2].comments[0].content, 'summary body');
     assert.equal(posted[2].status, 'closed');
 
-    postReview(t, { ...pr, force: true, postAttempt: 'forced-test' }, 'forced summary', [
+    const forcedBody = `<!-- debate-review head=${pr.head} main=claude -->\nforced summary`;
+    postReview(t, { ...pr, force: true, postAttempt: 'forced-test' }, forcedBody, [
       { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=contested -->\nupdated' },
     ]);
     const forced = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
     assert.equal(forced.length, 5);                       // force adds a fresh inline plus summary
     assert.match(forced[3].comments[0].content, /attempt=forced-test/);
     assert.match(forced[3].comments[0].content, /updated$/);
+    assert.match(forced[4].comments[0].content, /head=.* attempt=forced-test main=claude/);
+
+    process.env.AZ_SUMMARY_EXISTS = '1';
+    const resumed = postReview(t, { ...pr, postAttempt: 'forced-test' }, forcedBody, [
+      { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=contested -->\nupdated' },
+    ]);
+    delete process.env.AZ_SUMMARY_EXISTS;
+    assert.deepEqual([resumed.threadIds[0], resumed.summaryThreadId], [7021, 7022]);
+    assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 5);
   } finally {
     for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
     fs.rmSync(path.dirname(log), { recursive: true, force: true });

@@ -34,7 +34,8 @@ if [ "$method" = "POST" ]; then
 fi
 
 case "$url" in
-  *"/pullRequests/1845/threads?"*) cat "$F/threads.json" ;;
+  *"/pullRequests/1845/threads?"*)
+    if [ "$AZ_SUMMARY_EXISTS" = "1" ]; then cat "$F/threads-with-summary.json"; else cat "$F/threads.json"; fi ;;
   *"/pullRequests/1845/iterations/3/changes?"*'$skip=2'*) cat "$F/changes-page-2.json" ;;
   *"/pullRequests/1845/iterations/3/changes?"*) cat "$F/changes.json" ;;
   *"/pullRequests/1845/iterations?"*) cat "$F/iterations.json" ;;

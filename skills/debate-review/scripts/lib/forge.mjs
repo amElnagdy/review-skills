@@ -377,7 +377,7 @@ function postGitlab(t, pr, body, comments) {
  */
 function postAzure(t, pr, body, comments) {
   const url = azureRepoApi(t, `/pullRequests/${t.number}/threads`);
-  const existingThreads = comments.length && !pr.force ? azureRest(url).value || [] : [];
+  const existingThreads = !pr.force ? azureRest(url).value || [] : [];
   const changes = comments.length ? azureIterationChanges(t, pr) : [];
   const changeIds = new Map(changes.map(change => [change.item?.path, change.changeTrackingId]));
   const threadIds = [];
@@ -421,9 +421,18 @@ function postAzure(t, pr, body, comments) {
     threadIds.push(thread.id);
   }
 
+  const headMarker = `<!-- debate-review head=${pr.head}`;
+  const summaryMarker = `${headMarker}${pr.postAttempt ? ` attempt=${pr.postAttempt}` : ''}`;
+  const existingSummary = existingThreads.find(thread =>
+    thread.comments?.some(comment => String(comment.content).includes(summaryMarker)));
+  if (existingSummary) return { summaryThreadId: existingSummary.id, threadIds, url: pr.url };
+
+  const summaryBody = pr.postAttempt
+    ? body.replace(headMarker, `${headMarker} attempt=${pr.postAttempt}`)
+    : body;
   const summary = azureRest(url, {
     method: 'POST',
-    body: { comments: [{ parentCommentId: 0, content: body, commentType: 'text' }], status: 'closed' },
+    body: { comments: [{ parentCommentId: 0, content: summaryBody, commentType: 'text' }], status: 'closed' },
   });
   return { summaryThreadId: summary.id, threadIds, url: pr.url };
 }
