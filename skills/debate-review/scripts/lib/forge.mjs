@@ -93,7 +93,7 @@ function azureOrigin(origin, segments) {
     const git = segments.indexOf('_git');
     if (git < 0 || git !== segments.length - 2) return null;
     const repo = decodeURIComponent(segments[git + 1]);
-    return azureTarget(origin.split('.')[0], git === 1 ? decodeURIComponent(segments[0]) : repo, repo);
+    return azureTarget(origin.split('.')[0], git >= 1 ? decodeURIComponent(segments[git - 1]) : repo, repo);
   }
 
   return null;

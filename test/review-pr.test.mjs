@@ -43,6 +43,7 @@ test('parseOrigin: azure devops remotes (https with userinfo, ssh v3, legacy) an
   assert.deepEqual(parseOrigin('git@ssh.dev.azure.com:v3/wscegy/My%20Team/kultura-mobile'),
     { ...expected, project: 'My Team', owner: 'wscegy/My Team' });
   assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/Kultura/_git/kultura-mobile'), expected);
+  assert.deepEqual(parseOrigin('https://wscegy.visualstudio.com/DefaultCollection/Kultura/_git/kultura-mobile'), expected);
   assert.deepEqual(parseTarget('1845', 'https://wscegy@dev.azure.com/wscegy/Kultura/_git/kultura-mobile'), { ...expected, number: 1845 });
   assert.equal(cloneUrl(expected), 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile');
   assert.equal(cloneUrl({ host: 'github', origin: 'github.com', owner: 'a', repo: 'b' }), 'https://github.com/a/b.git');
