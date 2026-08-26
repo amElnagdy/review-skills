@@ -130,6 +130,8 @@ function cloneMatches(dir, target) {
   if (r.status !== 0) return false;
   const origin = parseOrigin(r.stdout.trim());
   return origin
+    && origin.host === target.host
+    && origin.origin.toLowerCase() === target.origin.toLowerCase()
     && origin.owner.toLowerCase() === target.owner.toLowerCase()
     && origin.repo.toLowerCase() === target.repo.toLowerCase();
 }
@@ -144,7 +146,8 @@ function findClone(target, opts, auth) {
   const top = run('git', ['rev-parse', '--show-toplevel'], { allowFail: true });
   if (top.status === 0 && cloneMatches(top.stdout.trim(), target)) return top.stdout.trim();
 
-  const cache = path.join(os.homedir(), '.cache', 'debate-review', 'clones', `${target.owner.replace(/\//g, '__')}__${target.repo}`);
+  const cacheName = [target.host, target.origin, target.owner, target.repo].join('__').replace(/\//g, '__');
+  const cache = path.join(os.homedir(), '.cache', 'debate-review', 'clones', cacheName);
   if (!fs.existsSync(cache)) {
     log(`cloning ${projectPath(target)} into ${cache}`);
     run('git', [...auth.args, 'clone', '--filter=blob:none', cloneUrl(target), cache],
@@ -160,7 +163,8 @@ function makeWorktree(clone, pr, baseBranch, auth) {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-'));
   fs.rmSync(dir, { recursive: true, force: true }); // git wants to create it
-  run('git', ['-C', clone, 'worktree', 'add', '--detach', '--quiet', dir, pr.head]);
+  run('git', [...auth.args, '-C', clone, 'worktree', 'add', '--detach', '--quiet', dir, pr.head],
+    { env: auth.env });
   return dir;
 }
 
@@ -225,6 +229,7 @@ async function main() {
   let worktree;
   let localSnapshot = null;
   let repoDirForRoles;
+  let auth = { args: [], env: process.env };
   const printOnly = Boolean(opts.local || opts.dryRun);
 
   if (opts.local) {
@@ -247,7 +252,7 @@ async function main() {
       process.exit(3);
     }
 
-    const auth = gitAuth(target);
+    auth = gitAuth(target);
     clone = findClone(target, opts, auth);
     worktree = makeWorktree(clone, pr, pr.baseRef, auth);
     repoDirForRoles = clone;
@@ -291,9 +296,10 @@ async function main() {
 
   try {
     fs.mkdirSync(outDir, { recursive: true });
-    const diff = text('git', ['-C', worktree, 'diff', `${baseRef}...HEAD`]);
+    const diff = text('git', [...auth.args, '-C', worktree, 'diff', `${baseRef}...HEAD`], { env: auth.env });
     if (!diff.trim()) throw new Error('empty diff, nothing to review');
-    const commits = text('git', ['-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline']);
+    const commits = text('git', [...auth.args, '-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline'],
+      { env: auth.env });
     const lineMap = diffLineMap(diff);
 
     const who = {
@@ -395,7 +401,7 @@ async function main() {
       }
       process.stdout.write(`\n(${kind}: nothing posted; artifacts in ${outDir})\n`);
     } else {
-      const result = postReview(target, pr, body, comments);
+      const result = postReview(target, { ...pr, force: opts.force }, body, comments);
       runLog.postResult = result;
       save();
       log(`posted ${comments.length} inline comment(s): ${result.url}`);

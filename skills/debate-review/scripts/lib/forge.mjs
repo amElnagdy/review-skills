@@ -370,7 +370,7 @@ function postGitlab(t, pr, body, comments) {
  */
 function postAzure(t, pr, body, comments) {
   const url = azureRepoApi(t, `/pullRequests/${t.number}/threads`);
-  const existingThreads = comments.length ? azureRest(url).value || [] : [];
+  const existingThreads = comments.length && !pr.force ? azureRest(url).value || [] : [];
   const changes = comments.length ? azureIterationChanges(t, pr) : [];
   const changeIds = new Map(changes.map(change => [change.item?.path, change.changeTrackingId]));
   const threadIds = [];

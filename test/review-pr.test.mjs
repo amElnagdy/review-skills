@@ -108,6 +108,13 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.equal(posted[2].threadContext, undefined);     // the summary is not anchored to a file
     assert.equal(posted[2].comments[0].content, 'summary body');
     assert.equal(posted[2].status, 'closed');
+
+    postReview(t, { ...pr, force: true }, 'forced summary', [
+      { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=contested -->\nupdated' },
+    ]);
+    const forced = fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+    assert.equal(forced.length, 5);                       // force adds a fresh inline plus summary
+    assert.match(forced[3].comments[0].content, /updated$/);
   } finally {
     for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
     fs.rmSync(path.dirname(log), { recursive: true, force: true });
@@ -190,6 +197,24 @@ test('review-pr: --local --repo-dir non-repo exits 1 after parsing', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /not a git work tree/);
   fs.rmSync(missing, { recursive: true, force: true });
+});
+
+test('review-pr: Azure repo-dir rejects a same-named GitLab clone', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-forge-mismatch-'));
+  const bins = [path.join(ROOT, 'test/fixtures/forge/bin'), path.join(ROOT, 'test/fixtures/azure/bin')];
+  const env = { ...process.env, PATH: `${bins.join(':')}:${process.env.PATH}`, FIXTURES: path.join(ROOT, 'test/fixtures') };
+  try {
+    spawnSync('git', ['init', '-b', 'main', dir], { encoding: 'utf8' });
+    spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://git.example.com/wscegy/Kultura/kultura-mobile.git']);
+    const result = spawnSync('node', [script,
+      'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845',
+      '--dry-run', '--repo-dir', dir], { encoding: 'utf8', env });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /origin does not match/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('review-pr: --local removes the snapshot if --out-dir cannot be created', () => {
