@@ -19,6 +19,7 @@ test('parseTarget: github url, gitlab url, bare number via origin', () => {
   assert.deepEqual(parseTarget('12', 'git@github.com:amElnagdy/togi-app.git'),
     { host: 'github', origin: 'github.com', owner: 'amElnagdy', repo: 'togi-app', number: 12 });
   assert.equal(parseOrigin('https://gitlab.com/a/b/c.git').owner, 'a/b');
+  assert.equal(parseOrigin('git@git.example.com:2024/handbook.git').owner, '2024');
   assert.throws(() => parseTarget('nope'));
 });
 

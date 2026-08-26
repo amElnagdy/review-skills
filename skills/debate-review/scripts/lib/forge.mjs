@@ -62,7 +62,8 @@ function legacyAzureProject(segment, repo) {
 
 /** Parse a git remote URL (https or ssh) into { host, origin, owner, repo }. */
 export function parseOrigin(url) {
-  const m = url.match(/^(?:https?:\/\/|ssh:\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[/:](.+?)(?:\.git)?\/?$/);
+  const m = url.match(/^(?:https?:\/\/|ssh:\/\/)(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/)
+    || url.match(/^(?:[^@/]+@)?([^/:]+)[/:](.+?)(?:\.git)?\/?$/);
   if (!m) return null;
   const origin = m[1].toLowerCase();
   const segments = m[2].split('/');
