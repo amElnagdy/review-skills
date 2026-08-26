@@ -153,9 +153,13 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     const resumed = postReview(t, { ...pr, postAttempt: 'forced-test' }, forcedBody, [
       { path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=contested -->\nupdated' },
     ]);
-    delete process.env.AZ_SUMMARY_EXISTS;
     assert.deepEqual([resumed.threadIds[0], resumed.summaryThreadId], [7021, 7022]);
     assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 5);
+
+    const plain = postReview(t, pr, `<!-- debate-review head=${pr.head} main=claude -->\nplain summary`, []);
+    delete process.env.AZ_SUMMARY_EXISTS;
+    assert.notEqual(plain.summaryThreadId, 7022);
+    assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 6);
   } finally {
     for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
     fs.rmSync(path.dirname(log), { recursive: true, force: true });
@@ -298,7 +302,9 @@ test('review-pr: Azure resumes an interrupted post from the saved payload', () =
     });
     assert.equal(forced.status, 1);
     assert.doesNotMatch(forced.stderr, /resumed/);
-    assert.match(fs.readFileSync(forceGitLog, 'utf8'), / fetch /);
+    const forceGitCalls = fs.readFileSync(forceGitLog, 'utf8');
+    assert.match(forceGitCalls, / fetch /);
+    assert.doesNotMatch(forceGitCalls, /--config-env=.*(?:cat-file|worktree|diff|log)/);
 
     const args = [script, url, '--repo-dir', repo, '--out-dir', out];
     const failed = spawnSync('node', args, { encoding: 'utf8', env: { ...env, AZ_FAIL_POST: '1' } });

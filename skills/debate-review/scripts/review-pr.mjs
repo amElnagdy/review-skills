@@ -163,8 +163,7 @@ function makeWorktree(clone, pr, baseBranch, auth) {
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-'));
   fs.rmSync(dir, { recursive: true, force: true }); // git wants to create it
-  run('git', [...auth.args, '-C', clone, 'worktree', 'add', '--detach', '--quiet', dir, pr.head],
-    { env: auth.env });
+  run('git', ['-C', clone, 'worktree', 'add', '--detach', '--quiet', dir, pr.head]);
   return dir;
 }
 
@@ -176,8 +175,7 @@ function fetchHead(clone, pr, auth) {
   const first = run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', 'origin', pr.fetchRef],
     { allowFail: true, env: auth.env });
   const headExists = first.status === 0
-    && run('git', [...auth.args, '-C', clone, 'cat-file', '-e', `${pr.head}^{commit}`],
-      { allowFail: true, env: auth.env }).status === 0;
+    && run('git', ['-C', clone, 'cat-file', '-e', `${pr.head}^{commit}`], { allowFail: true }).status === 0;
   if (headExists) return;
   if (!pr.fetchRefAlt) {
     if (first.status !== 0) throw new Error(`cannot fetch ${pr.fetchRef}\n${first.stderr}`);
@@ -336,10 +334,9 @@ async function main() {
 
   try {
     fs.mkdirSync(outDir, { recursive: true });
-    const diff = text('git', [...auth.args, '-C', worktree, 'diff', `${baseRef}...HEAD`], { env: auth.env });
+    const diff = text('git', ['-C', worktree, 'diff', `${baseRef}...HEAD`]);
     if (!diff.trim()) throw new Error('empty diff, nothing to review');
-    const commits = text('git', [...auth.args, '-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline'],
-      { env: auth.env });
+    const commits = text('git', ['-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline']);
     const lineMap = diffLineMap(diff);
 
     const who = {

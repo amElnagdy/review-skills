@@ -423,7 +423,7 @@ function postAzure(t, pr, body, comments) {
   }
 
   const headMarker = `<!-- debate-review head=${pr.head}`;
-  const summaryMarker = `${headMarker}${pr.postAttempt ? ` attempt=${pr.postAttempt}` : ''}`;
+  const summaryMarker = pr.postAttempt ? `${headMarker} attempt=${pr.postAttempt}` : `${headMarker} main=`;
   const existingSummary = existingThreads.find(thread =>
     thread.comments?.some(comment => String(comment.content).includes(summaryMarker)));
   if (existingSummary) return { summaryThreadId: existingSummary.id, threadIds, url: pr.url };
