@@ -217,6 +217,51 @@ test('review-pr: Azure repo-dir rejects a same-named GitLab clone', () => {
   }
 });
 
+test('review-pr: Azure resumes an interrupted post from the saved payload', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-resume-repo-'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-azure-resume-out-'));
+  const log = path.join(out, 'posted.ndjson');
+  const gitLog = path.join(out, 'git.ndjson');
+  const target = { host: 'azure', origin: 'dev.azure.com', org: 'wscegy', project: 'Kultura', owner: 'wscegy/Kultura', repo: 'kultura-mobile', number: 1845 };
+  const head = '49793f1fec6cd58262e25752b79be791c68eb474';
+  fs.writeFileSync(path.join(out, 'run.json'), JSON.stringify({
+    schema: 'debate-review.run.v1',
+    printOnly: false,
+    target,
+    pr: { head },
+    posted: {
+      body: `<!-- debate-review head=${head} main=claude -->\nsummary`,
+      comments: [{ path: 'lib/a.dart', line: 12, claim: 'one', body: '<!-- debate-review:F1 status=agreed -->\none' }],
+    },
+  }));
+  const bins = [path.join(ROOT, 'test/fixtures/azure-git/bin'), path.join(ROOT, 'test/fixtures/azure/bin')];
+  const env = {
+    ...process.env,
+    PATH: `${bins.join(':')}:${process.env.PATH}`,
+    FIXTURES: path.join(ROOT, 'test/fixtures'),
+    AZ_LOG: log,
+    FAKE_GIT_LOG: gitLog,
+    FAKE_GIT_MISSING_HEAD: '1',
+  };
+  try {
+    const result = spawnSync('node', [script,
+      'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845',
+      '--repo-dir', repo, '--out-dir', out], { encoding: 'utf8', env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /resumed 1 saved inline comment/);
+    const posted = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(posted.length, 1);                       // existing inline reused; summary completed
+    assert.equal(posted[0].status, 'closed');
+    assert.match(fs.readFileSync(gitLog, 'utf8'),
+      /fetch --quiet https:\/\/dev\.azure\.com\/wscegy\/Forks\/_git\/kultura-mobile-fork test\/TEST-001/);
+    assert.ok(JSON.parse(fs.readFileSync(path.join(out, 'run.json'))).postResult);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
 test('review-pr: --local removes the snapshot if --out-dir cannot be created', () => {
   const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-src-'));

@@ -175,7 +175,10 @@ function makeWorktree(clone, pr, baseBranch, auth) {
 function fetchHead(clone, pr, auth) {
   const first = run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', 'origin', pr.fetchRef],
     { allowFail: true, env: auth.env });
-  if (first.status === 0) return;
+  const headExists = first.status === 0
+    && run('git', [...auth.args, '-C', clone, 'cat-file', '-e', `${pr.head}^{commit}`],
+      { allowFail: true, env: auth.env }).status === 0;
+  if (headExists) return;
   if (!pr.fetchRefAlt) throw new Error(`cannot fetch ${pr.fetchRef}\n${first.stderr}`);
   log(`${pr.fetchRef} is not available, falling back to ${pr.fetchRefAlt}`);
   run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', pr.fetchUrlAlt || 'origin', pr.fetchRefAlt],
@@ -216,6 +219,17 @@ function findStandards(worktree) {
     }
   }
   return found.length ? found.join(', ') : 'none found, skip the Standards axis';
+}
+
+function savedAzurePost(outDir, target, pr) {
+  const file = path.join(outDir, 'run.json');
+  if (!fs.existsSync(file)) return null;
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (saved.schema !== 'debate-review.run.v1' || saved.printOnly !== false || saved.postResult) return null;
+  if (saved.pr?.head !== pr.head || saved.target?.host !== 'azure') return null;
+  if (saved.target.number !== target.number || projectPath(saved.target) !== projectPath(target)) return null;
+  if (!saved.posted?.body || !Array.isArray(saved.posted.comments)) return null;
+  return saved;
 }
 
 // ============================================================ flow
@@ -289,6 +303,7 @@ async function main() {
     target,
     pr,
     outDir,
+    printOnly,
     startedAt: new Date().toISOString(),
     stages: {},
   };
@@ -296,6 +311,17 @@ async function main() {
 
   try {
     fs.mkdirSync(outDir, { recursive: true });
+    const savedPost = !printOnly && !opts.force && target.host === 'azure'
+      ? savedAzurePost(outDir, target, pr)
+      : null;
+    if (savedPost) {
+      const result = postReview(target, pr, savedPost.posted.body, savedPost.posted.comments);
+      Object.assign(runLog, savedPost, { postResult: result });
+      log(`resumed ${savedPost.posted.comments.length} saved inline comment(s): ${result.url}`);
+      process.stdout.write(`${result.url}\n`);
+      return;
+    }
+
     const diff = text('git', [...auth.args, '-C', worktree, 'diff', `${baseRef}...HEAD`], { env: auth.env });
     if (!diff.trim()) throw new Error('empty diff, nothing to review');
     const commits = text('git', [...auth.args, '-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline'],

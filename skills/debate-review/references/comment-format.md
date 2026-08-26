@@ -47,8 +47,9 @@ Suggested: <recommendation>
 _<debate_note>_
 ```
 
-Azure DevOps prepends `<!-- debate-review finding=<content-hash> head=<sha> -->` so a retry can reuse
-the same finding thread without confusing it with a different finding that reused the model's ordinal.
+Azure DevOps prepends `<!-- debate-review finding=<content-hash> head=<sha> -->` to identify threads
+that landed before a posting failure. The retry resumes the exact saved payload from `run.json`; it
+does not ask the reviewers to regenerate the finding text.
 
 A contested finding's first line reads `**<level>, contested. The second reviewer disagreed; the
 main reviewer holds it, reasons below.** <claim>`.
