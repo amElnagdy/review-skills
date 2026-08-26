@@ -70,8 +70,14 @@ test('azure: read the pr, spot an existing review, post threads (fake az)', () =
     assert.equal(pr.url, 'https://dev.azure.com/wscegy/Kultura/_git/kultura-mobile/pullrequest/1845');
 
     const auth = gitAuth(t);
-    assert.deepEqual(auth.args, ['--config-env=http.extraheader=DEBATE_REVIEW_AZURE_AUTH']);
+    assert.deepEqual(auth.args, ['--config-env=http.https://dev.azure.com/.extraheader=DEBATE_REVIEW_AZURE_AUTH']);
     assert.equal(auth.env.DEBATE_REVIEW_AZURE_AUTH, 'AUTHORIZATION: bearer fake-azure-token');
+    const azureHeader = spawnSync('git', [...auth.args, 'config', '--get-urlmatch',
+      'http.extraheader', 'https://dev.azure.com/wscegy/repo'], { encoding: 'utf8', env: auth.env, cwd: os.tmpdir() });
+    const otherHeader = spawnSync('git', [...auth.args, 'config', '--get-urlmatch',
+      'http.extraheader', 'https://example.invalid/repo'], { encoding: 'utf8', env: auth.env, cwd: os.tmpdir() });
+    assert.equal(azureHeader.stdout.trim(), 'AUTHORIZATION: bearer fake-azure-token');
+    assert.equal(otherHeader.stdout.trim(), '');
 
     // the fixture carries a marker for a different head sha
     assert.equal(alreadyReviewed(t, pr), false);

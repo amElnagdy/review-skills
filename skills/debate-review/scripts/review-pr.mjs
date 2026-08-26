@@ -179,7 +179,10 @@ function fetchHead(clone, pr, auth) {
     && run('git', [...auth.args, '-C', clone, 'cat-file', '-e', `${pr.head}^{commit}`],
       { allowFail: true, env: auth.env }).status === 0;
   if (headExists) return;
-  if (!pr.fetchRefAlt) throw new Error(`cannot fetch ${pr.fetchRef}\n${first.stderr}`);
+  if (!pr.fetchRefAlt) {
+    if (first.status !== 0) throw new Error(`cannot fetch ${pr.fetchRef}\n${first.stderr}`);
+    throw new Error(`fetched ${pr.fetchRef}, but reviewed head ${pr.head} is missing; the head may have moved`);
+  }
   log(`${pr.fetchRef} is not available, falling back to ${pr.fetchRefAlt}`);
   run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', pr.fetchUrlAlt || 'origin', pr.fetchRefAlt],
     { env: auth.env });
