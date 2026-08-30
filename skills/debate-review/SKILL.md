@@ -40,6 +40,11 @@ node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
   `--main <implementer>` or `--debate <implementer>`. Only implementers whose relay has `--read-only`
   are accepted. These two lanes belong to the reviewer. Don't point them at a lane you use for other
   work, such as a plan-debate lane.
+- `--spec <path|->` feeds the Spec axis when the spec is not a linked forge issue. The script only
+  discovers specs from `#N` issue references in the PR title, body, and commits, and under `--local`
+  it discovers none at all, so a repo whose requirements live in Jira, Confluence, or a plan doc gets
+  the Spec axis silently skipped. Write the requirements to a file and pass it. Pairs with `--local`,
+  where the reviewers otherwise have nothing to check the diff against.
 - Exit code `3` means this head sha already has a debate-review. Re-run with `--force` to post again.
 - A run takes minutes, since it is two or three implementer sessions back to back. Run it in the
   background and report the printed URL when it finishes. Don't poll tightly.

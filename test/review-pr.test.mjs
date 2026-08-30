@@ -216,6 +216,33 @@ test('review-pr: usage errors exit 2', () => {
   assert.equal(spawnSync('node', [script, '--help'], { encoding: 'utf8' }).status, 0);
 });
 
+test('review-pr: --spec is read at parse time', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const spawn = (args, input) => spawnSync('node', [script, ...args], { encoding: 'utf8', input });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-spec-'));
+
+  assert.equal(spawn(['--local', '--spec']).status, 2);          // missing value
+
+  const missing = spawn(['--local', '--spec', path.join(dir, 'nope.md')]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /no such file/);
+
+  const blank = path.join(dir, 'blank.md');
+  fs.writeFileSync(blank, '   \n');
+  const empty = spawn(['--local', '--spec', blank]);
+  assert.equal(empty.status, 2);
+  assert.match(empty.stderr, /is empty/);
+
+  // a readable spec parses; the run then fails later, on the repo, not on --spec
+  const good = path.join(dir, 'spec.md');
+  fs.writeFileSync(good, 'AC-1: the invoice stays pending on a retry.');
+  const parsed = spawn(['--local', '--spec', good, '--repo-dir', dir]);
+  assert.equal(parsed.status, 1);
+  assert.doesNotMatch(parsed.stderr, /--spec/);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('review-pr: --local and --dry-run are separate jobs', () => {
   const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
   const spawn = (args) => spawnSync('node', [script, ...args], { encoding: 'utf8' });
