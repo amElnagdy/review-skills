@@ -46,6 +46,9 @@ Options:
   --debate-lane <name>      Fleet lane for debate (default: review-debate).
   --contested post|drop     Findings debate refuted but main kept (default: post, tagged).
   --min-confidence <0-1>    Drop findings (main F* and debate D*) below this confidence (default: 0.5).
+  --spec <path|->           Spec text for the Spec axis: a file, or - for stdin. Use when the spec
+                            lives outside the forge (Jira story, Confluence plan) or with --local,
+                            where no spec is discovered at all. Default: issues linked from the PR.
   --base <ref>              Base override (PR: forge base sha; --local: origin/HEAD, else main, else master).
   --repo-dir <dir>          Local clone (PR) or the working tree to snapshot (--local). Default: cwd.
   --out-dir <dir>           Artifacts (default: ~/.cache/debate-review/… ).
@@ -84,6 +87,7 @@ function parseArgs(argv) {
     else if (arg === '--debate-lane') opts.debateLane = value();
     else if (arg === '--contested') opts.contested = value();
     else if (arg === '--min-confidence') opts.minConfidence = Number(value());
+    else if (arg === '--spec') opts.spec = readSpec(value());
     else if (arg === '--base') opts.base = value();
     else if (arg === '--repo-dir') opts.repoDir = value();
     else if (arg === '--out-dir') opts.outDir = value();
@@ -111,6 +115,21 @@ function parseArgs(argv) {
 
   if (!opts.local) opts.target = positional[0];
   return opts;
+}
+
+/**
+ * Caller-supplied spec (`--spec`): a file path, or `-` for stdin. Read at parse time so a bad path
+ * fails before the reviewers are dispatched. Same 8000-char cap as the issues fetchSpec returns.
+ */
+function readSpec(src) {
+  let body;
+  try {
+    body = fs.readFileSync(src === '-' ? 0 : src, 'utf8').trim();
+  } catch (err) {
+    fail(2, `--spec ${src}: ${err.code === 'ENOENT' ? 'no such file' : err.message}`);
+  }
+  if (!body) fail(2, `--spec ${src} is empty`);
+  return body.slice(0, 8000);
 }
 
 function fail(code, message) {
@@ -356,7 +375,7 @@ async function main() {
       role, who: implementer, brief, cwd: worktree, outDir, timeout: opts.timeout,
     });
 
-    const spec = opts.local ? 'none found, skip the Spec axis' : fetchSpec(target, pr, commits);
+    const spec = opts.spec ?? (opts.local ? 'none found, skip the Spec axis' : fetchSpec(target, pr, commits));
 
     const mainBrief = prompt('review-main.md', {
       ...common,
