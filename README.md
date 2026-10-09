@@ -62,6 +62,12 @@ flowchart LR
   lane for plan debates, leave it alone. Only implementers whose relay supports `--read-only` are
   accepted, so the reviewers cannot touch your tree.
 
+  Then confirm both reviewers start on this machine, in about half a minute:
+
+  ```bash
+  node <skill-dir>/scripts/review-pr.mjs --check
+  ```
+
 ## What a review looks like
 
 Each finding is one inline comment, anchored to the lines it is about, rendered as a forge alert so
