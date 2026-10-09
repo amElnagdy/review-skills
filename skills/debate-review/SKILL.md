@@ -40,6 +40,7 @@ node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
   `--main <implementer>` or `--debate <implementer>`. Only implementers whose relay has `--read-only`
   are accepted. These two lanes belong to the reviewer. Don't point them at a lane you use for other
   work, such as a plan-debate lane.
+- `--check` starts each reviewer on a one-line read-only brief and prints `ok` or `FAIL` with the reason per role, exit `1` on any failure. Run it once on every machine after setting up the lanes; it catches a reviewer that is not installed, not signed in, out of quota, or refused by its sandbox before a PR waits on it.
 - Exit code `3` means this head sha already has a debate-review. Re-run with `--force` to post again.
 - A run takes minutes, since it is two or three implementer sessions back to back. Run it in the
   background and report the printed URL when it finishes. Don't poll tightly.

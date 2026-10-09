@@ -408,3 +408,36 @@ test('render: levels, alerts, marker first, body counts', async () => {
   assert.ok(body.startsWith('<!-- debate-review head=abcdef1234 main=claude debate=codex agreed=2 contested=1 p0=1 p1=1 p2=1 -->'));
   assert.ok(body.includes('| P0 | 1 |') && body.includes('| contested | 1 |') && body.includes('on `abcdef1`'));
 });
+
+test('review-pr --check: reports each reviewer and fails when one cannot start', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const skills = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-check-skills-'));
+  const relay = (name, body) => {
+    const dir = path.join(skills, `${name}-delegate`, 'scripts');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'relay.mjs'), `
+if (process.argv.includes('--help')) { console.log('--read-only'); process.exit(0); }
+const fs = await import('node:fs');
+const out = process.argv[process.argv.indexOf('--out-dir') + 1];
+${body}`);
+  };
+  relay('good', `fs.writeFileSync(out + '/result.json', JSON.stringify({ status: 'completed',
+    finalMessage: '\`\`\`json\\n{"schema": "debate-review/check", "ok": true}\\n\`\`\`' }));`);
+  relay('broken', `console.error('not logged in'); process.exit(1);`);
+  const env = { ...process.env, DELEGATE_SKILLS_DIR: skills };
+  const spawn = (args) => spawnSync('node', [script, '--check', ...args], { encoding: 'utf8', env });
+  try {
+    const ok = spawn(['--main', 'good', '--debate', 'good']);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /^main {4}good .* ok in \d+s$/m);
+    assert.match(ok.stdout, /warning: main and debate are both good/);
+
+    const failed = spawn(['--main', 'good', '--debate', 'broken']);
+    assert.equal(failed.status, 1);
+    assert.match(failed.stdout, /^debate +broken .* FAIL: debate: relay exited 1 without writing result\.json$/m);
+
+    assert.equal(spawn(['https://github.com/a/b/pull/1']).status, 2);
+  } finally {
+    fs.rmSync(skills, { recursive: true, force: true });
+  }
+});
