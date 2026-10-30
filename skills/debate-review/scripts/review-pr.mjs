@@ -199,9 +199,25 @@ function removeWorktree(clone, dir) {
 
 // ============================================================ briefs
 
+/** Diff text for the reviewer brief. Read-only reviewers may have no shell, so the diff must be in the brief. */
+function embedDiff(diff, stat, max = 200000, perFile = 30000) {
+  if (diff.length <= max) return diff;
+  const files = diff.split(/^(?=diff --git )/m);
+  let out = `(diff is ${diff.length} chars; file list plus per-file hunks, each capped at ${perFile} chars)\n${stat}\n`;
+  const skipped = [];
+  for (const f of files) {
+    const part = f.length > perFile ? f.slice(0, perFile) + '\n[... hunk truncated; Read the file at HEAD for the rest ...]\n' : f;
+    if (out.length + part.length > max) { skipped.push((f.match(/^diff --git a\/(\S+)/) || [])[1] || '?'); continue; }
+    out += part;
+  }
+  if (skipped.length) out += `\n[not embedded for size, Read these at HEAD: ${skipped.join(', ')}]\n`;
+  return out;
+}
+
 function prompt(name, vars) {
   let body = fs.readFileSync(path.join(SKILL_DIR, 'assets', 'prompts', name), 'utf8');
-  for (const [key, value] of Object.entries(vars)) {
+  const entries = Object.entries(vars).sort(([a], [b]) => (a === 'DIFF') - (b === 'DIFF'));
+  for (const [key, value] of entries) {
     body = body.split(`{{${key}}}`).join(value);
   }
   return body;
@@ -398,6 +414,7 @@ async function main() {
       HEAD: pr.head,
       PR_TITLE: pr.title,
       PR_BODY: pr.body.slice(0, 6000) || '(empty)',
+      DIFF: embedDiff(diff, text('git', ['-C', worktree, 'diff', '--stat', `${baseRef}...HEAD`])),
     };
     const send = (role, implementer, brief) => dispatch({
       role, who: implementer, brief, cwd: worktree, outDir, timeout: opts.timeout,

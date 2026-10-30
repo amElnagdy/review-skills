@@ -6,6 +6,12 @@ one fenced ```json block matching `debate-review.debate.v1` and nothing after it
 ## Input
 - Repository checked out at the PR head. Base: `{{BASE}}`. Head: `{{HEAD}}`.
 - Diff: `git diff {{BASE}}...{{HEAD}}`.
+- The diff is embedded below (you may have no shell; review THIS diff, cite its changed lines, and Read files at HEAD for context):
+
+<pr-diff>
+{{DIFF}}
+</pr-diff>
+
 - Findings under review:
 {{FINDINGS_JSON}}
 
