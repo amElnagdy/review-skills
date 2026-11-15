@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { run, text, log } from './lib/shell.mjs';
 import { snapshotWorkingTree } from './lib/local.mjs';
+import { presentAgentConfig, sanitizeAgentConfig } from './lib/agent-config.mjs';
 import { parseTarget, parseOrigin, projectPath, cloneUrl, gitAuth, fetchPR, alreadyReviewed, fetchSpec, postReview } from './lib/forge.mjs';
 import { diffLineMap, anchor } from './lib/diff.mjs';
 import { resolveRole, dispatch, extractJson, expectSchema } from './lib/dispatch.mjs';
@@ -56,6 +57,10 @@ Options:
   --force                   Post even if this head sha already has a debate-review.
   --keep                    Keep the temporary worktree (PR) or snapshot clone (--local).
   --help
+
+Project agent config (.claude, .codex, .cursor, .mcp.json, …) is stripped from the
+disposable checkout after the diff is computed. --local sanitizes the snapshot, not
+your working tree. --check warns if those paths are in the real cwd and does not delete.
 
 Exit codes: 0 posted/printed/check ok · 1 failure · 2 usage · 3 head already reviewed (use --force)
 `;
@@ -258,6 +263,10 @@ const CHECK_BRIEF = 'This is a setup check. Read no files and change nothing. Re
  */
 function check(opts) {
   const cwd = opts.repoDir ? path.resolve(opts.repoDir) : process.cwd();
+  const found = presentAgentConfig(cwd);
+  if (found.length) {
+    log(`WARNING --check runs in the real tree and does not delete project agent config (${found.join(', ')}); hooks or MCP servers there still load`);
+  }
   const outDir = opts.outDir || fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-check-'));
   const lanes = { main: opts.mainLane, debate: opts.debateLane };
   const explicit = { main: opts.main, debate: opts.debate };
@@ -385,6 +394,8 @@ async function main() {
     if (!diff.trim()) throw new Error('empty diff, nothing to review');
     const commits = text('git', ['-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline']);
     const lineMap = diffLineMap(diff);
+    // Disposable checkout only (PR worktree or --local snapshot). Never the user's real tree.
+    sanitizeAgentConfig(worktree, { protect: repoDirForRoles });
 
     const who = {
       main: resolveRole('main', { explicit: opts.main, lane: opts.mainLane, cwd: repoDirForRoles }),

@@ -62,6 +62,13 @@ flowchart LR
   lane for plan debates, leave it alone. Only implementers whose relay supports `--read-only` are
   accepted, so the reviewers cannot touch your tree.
 
+  Reviewers run inside a disposable checkout of the PR head (or a `--local` snapshot). After the
+  diff is computed, project agent config such as `.claude`, `.codex`, `.cursor`, `.opencode`,
+  `opencode.json`, and `.mcp.json` is deleted from that checkout so a PR cannot execute hooks or
+  start MCP servers on the reviewer machine. The commit diff still includes those files. `--local`
+  never modifies your working tree; `--check` also leaves the real tree alone and warns if those
+  paths are present.
+
   Then confirm both reviewers start on this machine, in about half a minute:
 
   ```bash
@@ -110,9 +117,10 @@ the PR's threads, so a re-run on an unchanged head still exits 3.
 ## Local preview
 
 `--local` reviews the files on disk (committed, uncommitted, and untracked, honoring `.gitignore`)
-against a base branch. It never calls a forge CLI. `--dry-run` still needs a live PR; it only
-skips the post. The two flags do not combine. Local snapshots reject non-UTF-8 Git paths instead of
-silently changing their bytes.
+against a base branch. It never calls a forge CLI. Reviewers see a throwaway snapshot, not your
+working tree; agent config is stripped from that snapshot the same way as for a PR worktree.
+`--dry-run` still needs a live PR; it only skips the post. The two flags do not combine. Local
+snapshots reject non-UTF-8 Git paths instead of silently changing their bytes.
 
 | Invocation | Source | Forge | Post |
 | --- | --- | --- | --- |
