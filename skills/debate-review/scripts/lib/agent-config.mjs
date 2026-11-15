@@ -72,12 +72,22 @@ function removeAgentPath(root, rel) {
   }
 }
 
-/** Delete known agent-config paths under `root`. Safe for a missing path. */
-export function sanitizeAgentConfig(root) {
+/**
+ * Delete known agent-config paths under `root`. Safe for a missing path.
+ * `protect` is a tree that must not be modified (the user's clone / working tree).
+ */
+export function sanitizeAgentConfig(root, { protect } = {}) {
+  if (protect != null && fs.realpathSync(root) === fs.realpathSync(protect)) {
+    throw new Error('refusing to strip agent config from the protected tree');
+  }
   for (const rel of AGENT_CONFIG_PATHS) removeAgentPath(root, rel);
 }
 
-/** Repo-root agent-config paths that currently exist (lstat, no follow). */
+/**
+ * Repo-root agent-config paths a reviewer CLI in `root` would resolve.
+ * Intermediate symlinks are followed (same as the CLI); the last hop uses lstat
+ * so a dangling symlink still counts as present. Used only to warn on `--check`.
+ */
 export function presentAgentConfig(root) {
   const found = [];
   for (const rel of AGENT_CONFIG_PATHS) {

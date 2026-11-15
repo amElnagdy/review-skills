@@ -58,6 +58,10 @@ Options:
   --keep                    Keep the temporary worktree (PR) or snapshot clone (--local).
   --help
 
+Project agent config (.claude, .codex, .cursor, .mcp.json, …) is stripped from the
+disposable checkout after the diff is computed. --local sanitizes the snapshot, not
+your working tree. --check warns if those paths are in the real cwd and does not delete.
+
 Exit codes: 0 posted/printed/check ok · 1 failure · 2 usage · 3 head already reviewed (use --force)
 `;
 
@@ -391,7 +395,7 @@ async function main() {
     const commits = text('git', ['-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline']);
     const lineMap = diffLineMap(diff);
     // Disposable checkout only (PR worktree or --local snapshot). Never the user's real tree.
-    sanitizeAgentConfig(worktree);
+    sanitizeAgentConfig(worktree, { protect: repoDirForRoles });
 
     const who = {
       main: resolveRole('main', { explicit: opts.main, lane: opts.mainLane, cwd: repoDirForRoles }),

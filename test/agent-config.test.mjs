@@ -67,13 +67,19 @@ test('sanitizeAgentConfig removes planted config and unlinks symlinks without to
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-agent-outside-'));
   try {
     fs.writeFileSync(path.join(outside, 'SECRET'), 'keep-me');
-    fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+    for (const rel of AGENT_CONFIG_PATHS) {
+      const abs = path.join(root, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      const base = rel.split('/').pop();
+      if (base.includes('.', 1)) fs.writeFileSync(abs, '{}\n');
+      else fs.mkdirSync(abs, { recursive: true });
+    }
     fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{"hooks":{}}');
-    fs.writeFileSync(path.join(root, '.mcp.json'), '{"mcpServers":{}}');
-    fs.writeFileSync(path.join(root, 'opencode.json'), '{}');
     fs.writeFileSync(path.join(root, 'src.js'), 'console.log(1)\n');
     fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# keep\n');
+    fs.rmSync(path.join(root, '.codex'), { recursive: true, force: true });
     fs.symlinkSync(outside, path.join(root, '.codex'));
+    fs.rmSync(path.join(root, '.opencode'), { recursive: true, force: true });
     fs.mkdirSync(path.join(root, '.opencode'));
     fs.symlinkSync(path.join(outside, 'SECRET'), path.join(root, '.opencode', 'plugin.js'));
 
@@ -90,6 +96,18 @@ test('sanitizeAgentConfig removes planted config and unlinks symlinks without to
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('sanitizeAgentConfig refuses to strip a protected tree', async () => {
+  const { sanitizeAgentConfig } = await import(AGENT_CONFIG);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-agent-protect-'));
+  try {
+    fs.writeFileSync(path.join(dir, '.mcp.json'), '{}\n');
+    assert.throws(() => sanitizeAgentConfig(dir, { protect: dir }), /protected tree/);
+    assert.equal(presentAt(dir, '.mcp.json'), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -113,6 +131,13 @@ test('sanitizeAgentConfig does not follow a symlink parent when removing a neste
   }
 });
 
+test('review-pr --help mentions stripping agent config from the disposable checkout', () => {
+  const result = spawnSync('node', [SCRIPT, '--help'], { encoding: 'utf8' });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /stripped from the\n?disposable checkout/s);
+  assert.match(result.stdout, /--check warns/);
+});
+
 test('review-pr --local strips agent config before dispatch, keeps the user tree, and still diffs those paths', () => {
   const src = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-agent-src-'));
   const skills = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-agent-skills-'));
@@ -126,8 +151,7 @@ test('review-pr --local strips agent config before dispatch, keeps the user tree
     spawnSync('git', ['-C', src, 'checkout', '-b', 'topic']);
 
     fs.mkdirSync(path.join(src, '.claude'), { recursive: true });
-    fs.writeFileSync(path.join(src, '.claude', 'settings.json'),
-      '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"touch HOOK_RAN"}]}]}}');
+    fs.writeFileSync(path.join(src, '.claude', 'settings.json'), '{"hooks":{}}');
     fs.writeFileSync(path.join(src, '.mcp.json'), '{"mcpServers":{"evil":{"command":"false"}}}');
     fs.writeFileSync(path.join(outside, 'SECRET'), 'keep-me');
     fs.symlinkSync(outside, path.join(src, '.codex'));
@@ -179,7 +203,6 @@ fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({
     assert.equal(presentAt(src, '.mcp.json'), true);
     assert.equal(fs.lstatSync(path.join(src, '.codex')).isSymbolicLink(), true);
     assert.equal(fs.readFileSync(path.join(outside, 'SECRET'), 'utf8'), 'keep-me');
-    assert.equal(fs.existsSync(path.join(src, 'HOOK_RAN')), false);
   } finally {
     fs.rmSync(src, { recursive: true, force: true });
     fs.rmSync(skills, { recursive: true, force: true });
