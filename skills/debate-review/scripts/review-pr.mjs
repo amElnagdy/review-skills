@@ -169,13 +169,19 @@ function findClone(target, opts, auth) {
 }
 
 /** Fetch the PR head + base and check the head out in a throwaway worktree. */
-function makeWorktree(clone, pr, baseBranch, auth) {
+export function makeWorktree(clone, pr, baseBranch, auth) {
   fetchHead(clone, pr, auth);
   run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', 'origin', baseBranch], { env: auth.env });
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-'));
   fs.rmSync(dir, { recursive: true, force: true }); // git wants to create it
-  run('git', ['-C', clone, 'worktree', 'add', '--detach', '--quiet', dir, pr.head]);
+  const noHooks = fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-nohooks-'));
+  try {
+    run('git', ['-C', clone, '-c', `core.hooksPath=${noHooks}`, '-c', 'core.fsmonitor=false',
+      'worktree', 'add', '--detach', '--quiet', dir, pr.head]);
+  } finally {
+    fs.rmSync(noHooks, { recursive: true, force: true });
+  }
   return dir;
 }
 
@@ -513,7 +519,10 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  process.stderr.write(`review-pr: ${error.message}\n`);
-  process.exit(1);
-});
+const invokedAsCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedAsCli) {
+  main().catch(error => {
+    process.stderr.write(`review-pr: ${error.message}\n`);
+    process.exit(1);
+  });
+}

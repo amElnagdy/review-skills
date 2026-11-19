@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { run, text } from '../skills/debate-review/scripts/lib/shell.mjs';
+
+const LOCAL_MJS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../skills/debate-review/scripts/lib/local.mjs');
+const SHELL_MJS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../skills/debate-review/scripts/lib/shell.mjs');
 import {
   resolveBase,
   isClean,
@@ -906,6 +911,78 @@ test('snapshot cleanup removes the clone after success and after overlay failure
     const fifo = path.join(dir, 'pipe');
     run('mkfifo', [fifo]);
     assert.throws(() => snapshotWorkingTree(dir, { keep: false }), /special file/);
+  });
+});
+
+test('snapshot overlay: GIT_INDEX_FILE does not leak into clone git commands', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
+    commitAll(dir, 'a');
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'dirty\n');
+    fs.writeFileSync(path.join(dir, 'b.txt'), 'new\n');
+
+    const extDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-local-idx-'));
+    const extIndex = path.join(extDir, 'index');
+    fs.copyFileSync(path.join(dir, '.git', 'index'), extIndex);
+    const extBefore = fs.readFileSync(extIndex);
+    const srcIndexBefore = fs.readFileSync(path.join(dir, '.git', 'index'));
+    try {
+      const r = spawnSync('node', ['--input-type=module', '-e', `
+        import { snapshotWorkingTree } from ${JSON.stringify(LOCAL_MJS)};
+        import { text } from ${JSON.stringify(SHELL_MJS)};
+        const snap = snapshotWorkingTree(${JSON.stringify(dir)}, { keep: true });
+        console.log(JSON.stringify({
+          dir: snap.dir,
+          a: text('git', ['-C', snap.dir, 'show', 'HEAD:a.txt']),
+          names: text('git', ['-C', snap.dir, 'ls-tree', '-r', '--name-only', 'HEAD']),
+        }));
+      `], { encoding: 'utf8', env: { ...process.env, GIT_INDEX_FILE: extIndex } });
+      assert.equal(r.status, 0, r.stderr);
+      const out = JSON.parse(r.stdout);
+      try {
+        assert.equal(out.a, 'dirty');
+        assert.match(out.names, /^b\.txt$/m);
+        assert.deepEqual(fs.readFileSync(extIndex), extBefore);
+        assert.deepEqual(fs.readFileSync(path.join(dir, '.git', 'index')), srcIndexBefore);
+      } finally {
+        fs.rmSync(out.dir, { recursive: true, force: true });
+      }
+    } finally {
+      fs.rmSync(extDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('snapshot overlay: hashes the captured copy when the source file changes after copy', () => {
+  withRepo((dir) => {
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'base\n');
+    commitAll(dir, 'base');
+    fs.writeFileSync(path.join(dir, 'race.txt'), 'version-A\n');
+
+    const r = spawnSync('node', ['--input-type=module', '-e', `
+      import fs from 'node:fs';
+      import { snapshotWorkingTree } from ${JSON.stringify(LOCAL_MJS)};
+      import { text } from ${JSON.stringify(SHELL_MJS)};
+      const orig = fs.copyFileSync;
+      fs.copyFileSync = (src, dst, mode) => {
+        orig(src, dst, mode);
+        if (String(src).endsWith('race.txt')) fs.writeFileSync(src, 'version-B\\n');
+      };
+      const snap = snapshotWorkingTree(${JSON.stringify(dir)}, { keep: true });
+      console.log(JSON.stringify({
+        dir: snap.dir,
+        copy: fs.readFileSync(snap.dir + '/race.txt', 'utf8'),
+        blob: text('git', ['-C', snap.dir, 'show', 'HEAD:race.txt']),
+      }));
+    `], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    try {
+      assert.equal(out.copy, 'version-A\n');
+      assert.equal(out.blob, 'version-A');
+    } finally {
+      fs.rmSync(out.dir, { recursive: true, force: true });
+    }
   });
 });
 

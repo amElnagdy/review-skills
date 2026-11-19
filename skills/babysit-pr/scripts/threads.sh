@@ -94,11 +94,11 @@ harvest_github() {
   local owner="${REPO%%/*}" name="${REPO##*/}"
 
   local pr_author
-  pr_author=$(gh api "repos/$REPO/pulls/$NUMBER" -q '.user.login')
+  pr_author=$(gh api --hostname "$HOST" "repos/$REPO/pulls/$NUMBER" -q '.user.login')
 
   # --paginate follows pageInfo until exhausted; --slurp wraps the pages in one array.
   local pages
-  pages=$(gh api graphql --paginate --slurp -f query='
+  pages=$(gh api --hostname "$HOST" graphql --paginate --slurp -f query='
 query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$pr){
@@ -141,7 +141,7 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
       } | thread_marker ]' <<<"$pages")
 
   # --slurp here too: past one page, bare --paginate emits back-to-back arrays.
-  reviews=$(gh api "repos/$REPO/pulls/$NUMBER/reviews" --paginate --slurp \
+  reviews=$(gh api --hostname "$HOST" "repos/$REPO/pulls/$NUMBER/reviews" --paginate --slurp \
     | jq "$JQ_MARKERS"'
       [.[][] | {id, author: .user.login, author_bot: (.user.type == "Bot"),
                 state, commit_id, submitted_at, body, source: "review"}
@@ -153,7 +153,7 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
 
 # ============================================================ GitLab
 harvest_gitlab() {
-  local pid base mr head pr_author discussions notes threads reviews
+  local pid base mr head pr_author discussions notes threads reviews disc_tmp
   pid=$(jq -rn --arg v "$REPO" '$v|@uri')
   base="projects/$pid/merge_requests/$NUMBER"
 
@@ -190,12 +190,20 @@ harvest_gitlab() {
       } | thread_marker ]' <<<"$discussions")
 
   # Top-level bodies: non-system notes without a diff position that are not the root of a thread.
-  reviews=$(jq --argjson threads "$threads" --argjson discussions "$discussions" "$JQ_MARKERS"'
-    ([ $discussions[] | select(.individual_note == false) | .notes[0].id ]) as $roots
+  # discussions JSON is slurpfile'd so a large MR does not hit the 128KiB per-argument cap.
+  disc_tmp=$(mktemp)
+  printf '%s' "$discussions" > "$disc_tmp"
+  if reviews=$(jq --slurpfile discussions "$disc_tmp" "$JQ_MARKERS"'
+    ([ $discussions[0][] | select(.individual_note == false) | .notes[0].id ]) as $roots
     | [ .[] | select(.system != true) | select(.position == null) | select((.id as $i | $roots | index($i)) == null)
         | {id, author: .author.username, author_bot: (.author.bot // null),
            state: null, commit_id: null, submitted_at: .created_at, body, source: "note"}
-        | review_marker ]' <<<"$notes")
+        | review_marker ]' <<<"$notes"); then
+    rm -f "$disc_tmp"
+  else
+    rm -f "$disc_tmp"
+    return 1
+  fi
 
   emit "$head" "$pr_author" "$threads" "$reviews" \
     '{"outdated":false,"review_commit_id":false,"author_bot_flag":false}'
@@ -204,12 +212,23 @@ harvest_gitlab() {
 # ============================================================ output
 emit() {
   local head="$1" pr_author="$2" threads="$3" reviews="$4" caps="$5"
-  jq -n --arg forge "$FORGE" --arg host "$HOST" --arg repo "$REPO" --arg pr "$NUMBER" \
+  local tmp tfile rfile
+  tmp=$(mktemp -d)
+  tfile="$tmp/t.json"
+  rfile="$tmp/r.json"
+  printf '%s' "$threads" > "$tfile"
+  printf '%s' "$reviews" > "$rfile"
+  if jq -n --arg forge "$FORGE" --arg host "$HOST" --arg repo "$REPO" --arg pr "$NUMBER" \
         --arg head "$head" --arg pr_author "$pr_author" \
-        --argjson t "$threads" --argjson r "$reviews" --argjson caps "$caps" \
+        --slurpfile t "$tfile" --slurpfile r "$rfile" --argjson caps "$caps" \
     '{forge:$forge, host:$host, repo:$repo, pr:($pr|tonumber), head:$head, pr_author:$pr_author,
-      capabilities:$caps, threads:$t, reviews:$r,
-      unresolved:[$t[]|select(.resolved==false)]|length}'
+      capabilities:$caps, threads:$t[0], reviews:$r[0],
+      unresolved:[$t[0][]|select(.resolved==false)]|length}'; then
+    rm -rf "$tmp"
+    return 0
+  fi
+  rm -rf "$tmp"
+  return 1
 }
 
 case "$FORGE" in

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Fake gh for tests: answers the exact calls threads.sh makes with fixture files.
+[ -n "$GH_LOG" ] && { printf '%s ' "$@" | tr '\n' ' '; printf '\n'; } >> "$GH_LOG"
 F="$FIXTURES/github"
 case "$*" in
   *"graphql"*)                 cat "$F/graphql.json" ;;

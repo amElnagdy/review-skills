@@ -344,14 +344,46 @@ function postGithub(t, pr, body, comments) {
   return { reviewId: review.id, url: review.html_url };
 }
 
+function findingMarker(pr, c) {
+  const filePath = c.path.startsWith('/') ? c.path : `/${c.path}`;
+  const fingerprint = createHash('sha256')
+    .update(JSON.stringify([filePath, c.start_line || c.line, c.line, c.claim]))
+    .digest('hex').slice(0, 16);
+  return `<!-- debate-review finding=${fingerprint} head=${pr.head}${pr.postAttempt ? ` attempt=${pr.postAttempt}` : ''} -->`;
+}
+
+function glabNdjson(t, apiPath) {
+  const raw = text('glab', ['api', apiPath, '--paginate', '--output', 'ndjson'], { env: glabEnv(t) });
+  if (!raw) return [];
+  const rows = [];
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    const parsed = JSON.parse(line);
+    if (Array.isArray(parsed)) rows.push(...parsed);
+    else rows.push(parsed);
+  }
+  return rows;
+}
+
 function postGitlab(t, pr, body, comments) {
   const base = `projects/${glabProject(t)}/merge_requests/${t.number}`;
   const env = glabEnv(t);
   const discussionIds = [];
+  const existingDiscussions = !pr.force ? glabNdjson(t, `${base}/discussions?per_page=100`) : [];
+  const existingNotes = !pr.force ? glabNdjson(t, `${base}/notes?per_page=100`) : [];
 
   for (const c of comments) {
+    if (!c.claim) throw new Error('GitLab inline comment is missing its finding claim');
+    const marker = findingMarker(pr, c);
+    const existing = existingDiscussions.find(d =>
+      d.notes?.some(note => String(note.body).includes(marker)));
+    if (existing) {
+      discussionIds.push(existing.id);
+      continue;
+    }
+
     const payload = {
-      body: c.body,
+      body: `${marker}\n${c.body}`,
       position: {
         position_type: 'text',
         base_sha: pr.baseSha,
@@ -360,6 +392,7 @@ function postGitlab(t, pr, body, comments) {
         new_path: c.path,
         old_path: c.path,
         new_line: c.line,
+        ...(c.old_line != null ? { old_line: c.old_line } : {}),
       },
     };
     const discussion = json('glab', ['api', '--method', 'POST', `${base}/discussions`, '--input', '-'],
@@ -367,8 +400,16 @@ function postGitlab(t, pr, body, comments) {
     discussionIds.push(discussion.id);
   }
 
+  const headMarker = `<!-- debate-review head=${pr.head}`;
+  const summaryMarker = pr.postAttempt ? `${headMarker} attempt=${pr.postAttempt}` : `${headMarker} main=`;
+  const existingSummary = existingNotes.find(note => String(note.body).includes(summaryMarker));
+  if (existingSummary) return { noteId: existingSummary.id, discussionIds, url: pr.url };
+
+  const summaryBody = pr.postAttempt
+    ? body.replace(headMarker, `${headMarker} attempt=${pr.postAttempt}`)
+    : body;
   const note = json('glab', ['api', '--method', 'POST', `${base}/notes`, '--input', '-'],
-    { input: JSON.stringify({ body }), env });
+    { input: JSON.stringify({ body: summaryBody }), env });
   return { noteId: note.id, discussionIds, url: pr.url };
 }
 
@@ -386,10 +427,7 @@ function postAzure(t, pr, body, comments) {
   for (const c of comments) {
     if (!c.claim) throw new Error('Azure inline comment is missing its finding claim');
     const filePath = c.path.startsWith('/') ? c.path : `/${c.path}`;
-    const fingerprint = createHash('sha256')
-      .update(JSON.stringify([filePath, c.start_line || c.line, c.line, c.claim]))
-      .digest('hex').slice(0, 16);
-    const marker = `<!-- debate-review finding=${fingerprint} head=${pr.head}${pr.postAttempt ? ` attempt=${pr.postAttempt}` : ''} -->`;
+    const marker = findingMarker(pr, c);
     const existing = existingThreads.find(thread =>
       thread.comments?.some(comment => String(comment.content).includes(marker)));
     if (existing) {
