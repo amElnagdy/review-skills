@@ -63,6 +63,83 @@ test('threads.sh gitlab: same shape, individual notes and system notes excluded,
   assert.deepEqual([body.debate_head, body.debate_agreed, body.debate_contested, body.source, body.commit_id], ['bbbb2222', 0, 1, 'note', null]);
 });
 
+test('threads.sh github: every gh api call gets --hostname', () => {
+  const log = path.join(fsMod.mkdtempSync(path.join(osMod.tmpdir(), 'threads-gh-log-')), 'gh.log');
+  try {
+    const r = spawnSync('bash', [SCRIPT, '7', 'acme/app', '--github'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${path.join(FIXTURES, 'bin')}:${process.env.PATH}`, FIXTURES, GH_LOG: log },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const lines = fsMod.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean);
+    assert.ok(lines.length >= 3, `expected at least 3 gh api calls, got ${lines.length}`);
+    for (const line of lines) assert.match(line, /(?:^| )--hostname github\.com(?: |$)/);
+
+    const gheLog = `${log}.ghe`;
+    const ghe = spawnSync('bash', [SCRIPT, '7', 'acme/app', '--github', '--hostname', 'ghe.example.com'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${path.join(FIXTURES, 'bin')}:${process.env.PATH}`, FIXTURES, GH_LOG: gheLog },
+    });
+    assert.equal(ghe.status, 0, ghe.stderr);
+    const gheLines = fsMod.readFileSync(gheLog, 'utf8').trim().split('\n').filter(Boolean);
+    assert.ok(gheLines.length >= 3);
+    for (const line of gheLines) assert.match(line, /(?:^| )--hostname ghe\.example\.com(?: |$)/);
+  } finally {
+    fsMod.rmSync(path.dirname(log), { recursive: true, force: true });
+  }
+});
+
+test('threads.sh emit: a threads payload larger than 128KiB still produces JSON', () => {
+  const tmp = fsMod.mkdtempSync(path.join(osMod.tmpdir(), 'threads-big-'));
+  const githubDir = path.join(tmp, 'github');
+  fsMod.mkdirSync(githubDir);
+  const node = {
+    id: 'T0',
+    isResolved: false,
+    isOutdated: false,
+    path: 'src/a.py',
+    line: 12,
+    originalLine: 12,
+    diffSide: 'RIGHT',
+    viewerCanResolve: true,
+    first: { totalCount: 1, nodes: [{ databaseId: 101, author: { login: 'alice', __typename: 'User' }, body: `finding ${'x'.repeat(400)}` }] },
+    last: { nodes: [{ author: { login: 'alice' }, body: 'last' }] },
+  };
+  const nodes = Array.from({ length: 400 }, (_, i) => ({
+    ...node,
+    id: `T${i}`,
+    first: { totalCount: 1, nodes: [{ databaseId: 1000 + i, author: { login: 'alice', __typename: 'User' }, body: `finding ${i} ${'x'.repeat(400)}` }] },
+  }));
+  const pages = [{
+    data: {
+      repository: {
+        pullRequest: {
+          headRefOid: 'aaaa1111',
+          reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
+        },
+      },
+    },
+  }];
+  fsMod.writeFileSync(path.join(githubDir, 'graphql.json'), JSON.stringify(pages));
+  fsMod.copyFileSync(path.join(FIXTURES, 'github/reviews.json'), path.join(githubDir, 'reviews.json'));
+  try {
+    const payloadBytes = JSON.stringify(nodes).length;
+    assert.ok(payloadBytes > 128 * 1024, `fixture should exceed MAX_ARG_STRLEN, got ${payloadBytes}`);
+    const r = spawnSync('bash', [SCRIPT, '7', 'acme/app', '--github'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${path.join(FIXTURES, 'bin')}:${process.env.PATH}`, FIXTURES: tmp },
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.threads.length, 400);
+    assert.equal(out.unresolved, 400);
+    assert.equal(out.head, 'aaaa1111');
+  } finally {
+    fsMod.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('threads.sh: usage error without a number', () => {
   const r = spawnSync('bash', [SCRIPT], { encoding: 'utf8' });
   assert.equal(r.status, 2);
@@ -81,7 +158,13 @@ test('threads.sh: forge, repo and host come from the git origin when not given',
     spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', origin]);
     const r = spawnSync('bash', [SCRIPT, expect.forge === 'github' ? '7' : '45'], {
       cwd: dir, encoding: 'utf8',
-      env: { ...process.env, PATH: `${path.join(FIXTURES, 'bin')}:${process.env.PATH}`, FIXTURES },
+      env: {
+        ...process.env,
+        PATH: `${path.join(FIXTURES, 'bin')}:${process.env.PATH}`,
+        FIXTURES,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_SYSTEM: '/dev/null',
+      },
     });
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout);

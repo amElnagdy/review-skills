@@ -7,7 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseTarget, parseOrigin, cloneUrl, gitAuth, fetchPR, alreadyReviewed, fetchSpec, postReview } from '../skills/debate-review/scripts/lib/forge.mjs';
 import { diffLineMap, anchor } from '../skills/debate-review/scripts/lib/diff.mjs';
-import { extractJson, expectSchema, reviewIsolationArgs } from '../skills/debate-review/scripts/lib/dispatch.mjs';
+import { extractJson, expectSchema, dispatch, reviewIsolationArgs } from '../skills/debate-review/scripts/lib/dispatch.mjs';
+import { makeWorktree } from '../skills/debate-review/scripts/review-pr.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -195,11 +196,43 @@ test('diffLineMap + anchor: context and added lines are commentable, removed are
     'diff --git a/gone.py b/gone.py', '--- a/gone.py', '+++ /dev/null', '@@ -1,2 +0,0 @@', '-x', '-y',
   ].join('\n');
   const map = diffLineMap(diff);
-  assert.deepEqual([...map.get('x.py')], [10, 11, 12, 13, 14]);
+  assert.deepEqual([...map.get('x.py').keys()], [10, 11, 12, 13, 14]);
+  assert.equal(map.get('x.py').get(10), 10);   // context
+  assert.equal(map.get('x.py').get(11), null); // added
+  assert.equal(map.get('x.py').get(12), null); // added
+  assert.equal(map.get('x.py').get(13), 12);   // context
+  assert.equal(map.get('x.py').get(14), 13);   // context
   assert.equal(map.has('gone.py'), false);
   assert.deepEqual(anchor(map, { file: 'x.py', line_start: 11, line_end: 12 }), { path: 'x.py', line: 12, start_line: 11, snapped: false });
-  assert.deepEqual(anchor(map, { file: 'x.py', line_start: 40, line_end: 40 }), { path: 'x.py', line: 14, start_line: undefined, snapped: true });
+  assert.deepEqual(anchor(map, { file: 'x.py', line_start: 40, line_end: 40 }), { path: 'x.py', line: 14, start_line: undefined, old_line: 13, snapped: true });
   assert.equal(anchor(map, { file: 'other.py', line_start: 1, line_end: 1 }), null);
+});
+
+test('diffLineMap: +++ inside a hunk is an added line, not a file header', () => {
+  const diff = [
+    'diff --git a/README.md b/README.md', '--- a/README.md', '+++ b/README.md',
+    '@@ -1,3 +1,4 @@', ' # Title', '+++ heading', ' context', ' more',
+    'diff --git a/src/app.js b/src/app.js', '--- a/src/app.js', '+++ b/src/app.js',
+    '@@ -1,1 +1,2 @@', ' line', '+added',
+  ].join('\n');
+  const map = diffLineMap(diff);
+  assert.equal(map.has('heading'), false);
+  assert.deepEqual([...map.get('README.md').keys()], [1, 2, 3, 4]);
+  assert.equal(map.get('README.md').get(2), null); // added `++ heading`
+  assert.deepEqual([...map.get('src/app.js').keys()], [1, 2]);
+});
+
+test('diffLineMap: --- inside a hunk is a removed line, not a file header', () => {
+  const diff = [
+    'diff --git a/notes.md b/notes.md', '--- a/notes.md', '+++ b/notes.md',
+    '@@ -1,2 +1,1 @@', '--- dashdash', ' keep',
+    'diff --git a/next.js b/next.js', '--- a/next.js', '+++ b/next.js',
+    '@@ -1,1 +1,1 @@', ' ok',
+  ].join('\n');
+  const map = diffLineMap(diff);
+  assert.equal(map.has('dashdash'), false);
+  assert.deepEqual([...map.get('notes.md').keys()], [1]);
+  assert.deepEqual([...map.get('next.js').keys()], [1]);
 });
 
 test('extractJson + expectSchema', () => {
@@ -396,6 +429,10 @@ test('validate: contract checks fail closed and fill missing verdicts', async ()
 
   const debate = validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F1', verdict: 'refute', reason: 'r', evidence: 'e' }], new_findings: [f('D1')] }, findings);
   assert.deepEqual(debate.verdicts.map(v => `${v.id}:${v.verdict}`), ['F1:refute', 'F2:confirm']); // F2 filled as "no objection"
+  const omitted = validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F1', verdict: 'confirm' }, { id: 'F2', verdict: 'confirm' }] }, findings);
+  assert.deepEqual(omitted.new_findings, []);
+  assert.throws(() => validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F1', verdict: 'confirm' }], new_findings: f('D1') }, findings), /new_findings must be an array/);
+  assert.throws(() => validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F1', verdict: 'confirm' }], new_findings: null }, findings), /new_findings must be an array/);
   assert.throws(() => validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F9', verdict: 'confirm' }] }, findings), /unknown finding/);
   assert.throws(() => validateDebate({ schema: 'debate-review.debate.v1', verdicts: [{ id: 'F1', verdict: 'confirm' }, { id: 'F1', verdict: 'refute' }] }, findings), /more than one/);
 
@@ -422,3 +459,163 @@ test('render: levels, alerts, marker first, body counts', async () => {
   assert.ok(body.startsWith('<!-- debate-review head=abcdef1234 main=claude debate=codex agreed=2 contested=1 p0=1 p1=1 p2=1 -->'));
   assert.ok(body.includes('| P0 | 1 |') && body.includes('| contested | 1 |') && body.includes('on `abcdef1`'));
 });
+
+test('review-pr --check: reports each reviewer and fails when one cannot start', () => {
+  const script = path.join(ROOT, 'skills/debate-review/scripts/review-pr.mjs');
+  const skills = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-check-skills-'));
+  const relay = (name, body) => {
+    const dir = path.join(skills, `${name}-delegate`, 'scripts');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'relay.mjs'), `
+if (process.argv.includes('--help')) { console.log('--read-only'); process.exit(0); }
+const fs = await import('node:fs');
+const out = process.argv[process.argv.indexOf('--out-dir') + 1];
+${body}`);
+  };
+  relay('good', `fs.writeFileSync(out + '/result.json', JSON.stringify({ status: 'completed',
+    finalMessage: '\`\`\`json\\n{"schema": "debate-review/check", "ok": true}\\n\`\`\`' }));`);
+  relay('broken', `console.error('not logged in'); process.exit(1);`);
+  const env = { ...process.env, DELEGATE_SKILLS_DIR: skills };
+  const spawn = (args) => spawnSync('node', [script, '--check', ...args], { encoding: 'utf8', env });
+  try {
+    const ok = spawn(['--main', 'good', '--debate', 'good']);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /^main {4}good .* ok in \d+s$/m);
+    assert.match(ok.stdout, /warning: main and debate are both good/);
+
+    const failed = spawn(['--main', 'good', '--debate', 'broken']);
+    assert.equal(failed.status, 1);
+    assert.match(failed.stdout, /^debate +broken .* FAIL: debate: relay exited 1 without writing result\.json$/m);
+
+    assert.equal(spawn(['https://github.com/a/b/pull/1']).status, 2);
+  } finally {
+    fs.rmSync(skills, { recursive: true, force: true });
+  }
+});
+
+test('dispatch: a completed relay with readOnlyViolation is rejected', () => {
+  const skills = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-rov-skills-'));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-rov-out-'));
+  const dir = path.join(skills, 'probe-delegate', 'scripts');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'relay.mjs'), `
+if (process.argv.includes('--help')) { console.log('--read-only'); process.exit(0); }
+const fs = await import('node:fs');
+const outDir = process.argv[process.argv.indexOf('--out-dir') + 1];
+fs.mkdirSync(outDir, { recursive: true });
+fs.writeFileSync(outDir + '/result.json', JSON.stringify({
+  status: 'completed',
+  readOnlyViolation: true,
+  finalMessage: 'should not be used',
+}));
+`);
+  const saved = process.env.DELEGATE_SKILLS_DIR;
+  process.env.DELEGATE_SKILLS_DIR = skills;
+  try {
+    assert.throws(
+      () => dispatch({ role: 'main', who: { implementer: 'probe' }, brief: 'x', cwd: process.cwd(), outDir: out, timeout: '1m' }),
+      /read-only violation.*see /,
+    );
+    const err = (() => {
+      try {
+        dispatch({ role: 'main', who: { implementer: 'probe' }, brief: 'x', cwd: process.cwd(), outDir: out, timeout: '1m' });
+      } catch (error) {
+        return error.message;
+      }
+    })();
+    assert.match(err, new RegExp(out.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  } finally {
+    saved === undefined ? delete process.env.DELEGATE_SKILLS_DIR : (process.env.DELEGATE_SKILLS_DIR = saved);
+    fs.rmSync(skills, { recursive: true, force: true });
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('gitlab: context comments send old_line; a retry does not duplicate discussions', () => {
+  const store = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-glab-store-'));
+  const log = path.join(store, 'posted.ndjson');
+  const saved = { PATH: process.env.PATH, GLAB_STORE: process.env.GLAB_STORE, GLAB_LOG: process.env.GLAB_LOG, GLAB_FAIL_AFTER: process.env.GLAB_FAIL_AFTER };
+  process.env.PATH = `${path.join(ROOT, 'test/fixtures/gitlab-forge/bin')}:${process.env.PATH}`;
+  process.env.GLAB_STORE = store;
+  process.env.GLAB_LOG = log;
+  const t = { host: 'gitlab', origin: 'gitlab.example.com', owner: 'grp', repo: 'proj', number: 45 };
+  const pr = {
+    head: 'bbbb2222',
+    baseSha: 'basebase',
+    startSha: 'startstart',
+    url: 'https://gitlab.example.com/grp/proj/-/merge_requests/45',
+  };
+  const comments = [
+    { path: 'lib/x.rb', line: 7, old_line: 7, claim: 'naming', body: '<!-- debate-review:F1 -->\nnaming' },
+    { path: 'lib/x.rb', line: 12, claim: 'added', body: '<!-- debate-review:F2 -->\nadded' },
+  ];
+  const summary = '<!-- debate-review head=bbbb2222 main=claude debate=codex agreed=2 contested=0 p0=0 p1=1 p2=1 -->\nsummary';
+  try {
+    process.env.GLAB_FAIL_AFTER = '1';
+    assert.throws(() => postReview(t, pr, summary, comments), /requested POST failure/);
+    delete process.env.GLAB_FAIL_AFTER;
+
+    const first = postReview(t, pr, summary, comments);
+    assert.equal(first.discussionIds.length, 2);
+    assert.equal(first.discussionIds[0], 'd1'); // reused from the partial post
+    const posted = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(posted.length, 3); // 1 from the failed attempt + 1 remaining discussion + summary
+    assert.equal(posted[0].position.old_line, 7);
+    assert.equal(posted[0].position.new_line, 7);
+    assert.equal(posted[1].position.old_line, undefined);
+    assert.equal(posted[1].position.new_line, 12);
+    assert.match(posted[0].body, /debate-review finding=[0-9a-f]{16} head=bbbb2222/);
+    assert.equal(posted[2].body, summary);
+
+    const logAfter = fs.readFileSync(log, 'utf8');
+    const resumed = postReview(t, pr, summary, comments);
+    assert.deepEqual(resumed.discussionIds, first.discussionIds);
+    assert.equal(resumed.noteId, first.noteId);
+    assert.equal(fs.readFileSync(log, 'utf8'), logAfter); // no new POSTs
+  } finally {
+    for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+    fs.rmSync(store, { recursive: true, force: true });
+  }
+});
+
+test('makeWorktree: post-checkout hooks in the clone do not run', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-wt-src-'));
+  const sentinel = path.join(dir, 'hook-ran');
+  let worktree;
+  let bare;
+  try {
+    spawnSync('git', ['init', '-b', 'main', dir], { encoding: 'utf8' });
+    spawnSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
+    spawnSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+    spawnSync('git', ['-C', dir, 'config', 'commit.gpgsign', 'false']);
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
+    spawnSync('git', ['-C', dir, 'add', '-A']);
+    spawnSync('git', ['-C', dir, 'commit', '-m', 'a']);
+    const hook = path.join(dir, '.git', 'hooks', 'post-checkout');
+    fs.writeFileSync(hook, `#!/bin/sh\necho ran > "${sentinel}"\n`);
+    fs.chmodSync(hook, 0o755);
+
+    bare = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-wt-bare-'));
+    fs.rmSync(bare, { recursive: true, force: true });
+    spawnSync('git', ['clone', '--bare', dir, bare], { encoding: 'utf8' });
+    spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', bare]);
+    spawnSync('git', ['-C', dir, 'fetch', 'origin'], { encoding: 'utf8' });
+    const head = spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+
+    const control = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-wt-control-'));
+    fs.rmSync(control, { recursive: true, force: true });
+    spawnSync('git', ['-C', dir, 'worktree', 'add', '--detach', '--quiet', control, head], { encoding: 'utf8' });
+    assert.equal(fs.existsSync(sentinel), true, 'control: git worktree add runs post-checkout');
+    fs.rmSync(sentinel, { force: true });
+    spawnSync('git', ['-C', dir, 'worktree', 'remove', '--force', control], { encoding: 'utf8' });
+
+    worktree = makeWorktree(dir, { head, fetchRef: 'main' }, 'main', { args: [], env: process.env });
+    assert.equal(fs.existsSync(sentinel), false, 'makeWorktree must isolate hooks');
+    assert.equal(fs.existsSync(path.join(worktree, 'a.txt')), true);
+  } finally {
+    if (worktree) spawnSync('git', ['-C', dir, 'worktree', 'remove', '--force', worktree], { encoding: 'utf8' });
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (bare) fs.rmSync(bare, { recursive: true, force: true });
+  }
+});
+
