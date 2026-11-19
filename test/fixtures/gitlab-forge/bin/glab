@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Fake glab for debate-review forge tests: records POSTs and serves a stateful store.
+STORE="${GLAB_STORE:-/tmp/debate-review-glab-store}"
+mkdir -p "$STORE"
+method=GET
+path=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --method) method="$2"; shift 2 ;;
+    --input) shift 2 ;;
+    --hostname) shift 2 ;;
+    --paginate) shift ;;
+    --output) shift 2 ;;
+    api) shift ;;
+    *) path="$1"; shift ;;
+  esac
+done
+
+count_lines() {
+  local f="$1"
+  if [ -f "$f" ]; then wc -l < "$f"; else echo 0; fi
+}
+
+if [ "$method" = "POST" ]; then
+  body=$(cat)
+  posted=$(( $(count_lines "$STORE/discussions.ndjson") + $(count_lines "$STORE/notes.ndjson") ))
+  if [ -n "$GLAB_FAIL_AFTER" ] && [ "$posted" -ge "$GLAB_FAIL_AFTER" ]; then
+    echo "fake glab: requested POST failure" >&2
+    exit 1
+  fi
+  [ -n "$GLAB_LOG" ] && printf '%s\n' "$body" >> "$GLAB_LOG"
+  case "$path" in
+    */discussions)
+      id="d$(( $(count_lines "$STORE/discussions.ndjson") + 1 ))"
+      jq -nc --arg id "$id" --argjson body "$body" \
+        '{id:$id, notes:[{body:$body.body, position:$body.position}]}' >> "$STORE/discussions.ndjson"
+      echo "{\"id\":\"$id\"}"
+      exit 0 ;;
+    */notes)
+      id=$(( $(count_lines "$STORE/notes.ndjson") + 1 ))
+      jq -nc --argjson id "$id" --argjson body "$body" '{id:$id, body:$body.body}' >> "$STORE/notes.ndjson"
+      echo "{\"id\":$id}"
+      exit 0 ;;
+  esac
+  echo "fake glab: unexpected POST: $path" >&2
+  exit 1
+fi
+
+case "$path" in
+  */discussions*)
+    [ -f "$STORE/discussions.ndjson" ] && cat "$STORE/discussions.ndjson"
+    exit 0
+    ;;
+  */notes*)
+    [ -f "$STORE/notes.ndjson" ] && cat "$STORE/notes.ndjson"
+    exit 0
+    ;;
+  *)
+    echo "fake glab: unexpected GET: $path" >&2
+    exit 1
+    ;;
+esac

@@ -90,7 +90,7 @@ export function dispatch({ role, who, brief, cwd, outDir, timeout }) {
     throw new Error(`${role}: relay finished with status "${result.status}" (see ${dir})`);
   }
   if (result.readOnlyViolation === true) {
-    log(`WARNING ${role}: relay reported a read-only violation. Inspect ${dir}`);
+    throw new Error(`${role}: relay reported a read-only violation (see ${dir})`);
   }
 
   log(`${role}: done in ${seconds}s`);

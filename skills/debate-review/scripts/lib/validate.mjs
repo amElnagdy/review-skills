@@ -62,7 +62,11 @@ export function validateFindings(doc, role = 'main') {
 export function validateDebate(doc, findings, role = 'debate') {
   if (!doc || doc.schema !== 'debate-review.debate.v1') throw problem(role, 'expected schema debate-review.debate.v1');
   if (!Array.isArray(doc.verdicts)) throw problem(role, 'verdicts must be an array');
-  doc.new_findings = Array.isArray(doc.new_findings) ? doc.new_findings : [];
+  if (doc.new_findings === undefined) {
+    doc.new_findings = [];
+  } else if (!Array.isArray(doc.new_findings)) {
+    throw problem(role, 'new_findings must be an array');
+  }
 
   const known = new Set(findings.findings.map(f => f.id));
   const answered = new Set();
