@@ -9,6 +9,11 @@ one fenced ```json block matching `debate-review.debate.v1` and nothing after it
 - Findings under review:
 {{FINDINGS_JSON}}
 
+## Shell portability
+If the repository is on Windows or the shell is PowerShell, use PowerShell-native commands such as
+`Get-Content`, `Select-Object`, and `rg`. Do not invoke Unix-only commands such as `sed`, `awk`, or
+`grep`; a shell error is not evidence about the change.
+
 ## Stance
 Default to skepticism in both directions. The three verdicts are not symmetric. `refute` has the
 highest bar.

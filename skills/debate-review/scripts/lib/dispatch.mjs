@@ -46,14 +46,24 @@ export function resolveRole(role, { explicit, lane, cwd }) {
 
 const probeCache = new Map();
 
-/** Ask the relay itself whether it has a --read-only mode (so new relays work without a code change). */
-function supportsReadOnly(relayPath) {
+function relayHelp(relayPath) {
   if (!probeCache.has(relayPath)) {
     const help = spawnSync('node', [relayPath, '--help'], { encoding: 'utf8' });
-    const combined = `${help.stdout || ''}${help.stderr || ''}`;
-    probeCache.set(relayPath, /--read-only/.test(combined));
+    probeCache.set(relayPath, `${help.stdout || ''}${help.stderr || ''}`);
   }
   return probeCache.get(relayPath);
+}
+
+/** Ask the relay itself whether it has a --read-only mode (so new relays work without a code change). */
+function supportsReadOnly(relayPath) {
+  return /--read-only/.test(relayHelp(relayPath));
+}
+
+/** Select the strongest portable isolation mode exposed by a delegate relay. */
+export function reviewIsolationArgs(help) {
+  if (/--ignore-user-config/.test(help)) return ['--ignore-user-config'];
+  if (/--pure/.test(help)) return ['--pure'];
+  return [];
 }
 
 // ---------- dispatch ----------
@@ -73,7 +83,9 @@ export function dispatch({ role, who, brief, cwd, outDir, timeout }) {
   const briefPath = path.join(dir, 'brief.md');
   fs.writeFileSync(briefPath, brief);
 
-  const args = [relay, '--brief', briefPath, '--cd', cwd, '--read-only', '--out-dir', dir, '--timeout', timeout];
+  const isolation = reviewIsolationArgs(relayHelp(relay));
+  if (isolation.length === 0) log(`WARNING ${role}: ${who.implementer}-delegate cannot isolate ambient integrations`);
+  const args = [relay, '--brief', briefPath, '--cd', cwd, '--read-only', ...isolation, '--out-dir', dir, '--timeout', timeout];
   if (who.lane) args.push('--lane', who.lane);
 
   log(`${role}: ${who.implementer}${who.lane ? ` (lane ${who.lane})` : ''} …`);
