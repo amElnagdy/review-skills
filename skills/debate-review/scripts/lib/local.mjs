@@ -11,12 +11,25 @@ function gitText(repoDir, args, opts) {
   return text('git', ['-C', repoDir, ...args], opts);
 }
 
+const GIT_REPO_LOCAL_ENV = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_PREFIX',
+  'GIT_NAMESPACE',
+];
+
 function isolatedEnv() {
-  return {
+  const env = {
     ...process.env,
     GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_CONFIG_SYSTEM: '/dev/null',
   };
+  for (const key of GIT_REPO_LOCAL_ENV) delete env[key];
+  return env;
 }
 
 function isolatedGit(tmp, hooksDir, args, opts = {}) {
@@ -419,7 +432,6 @@ function stageDirtyPaths(repoDir, tmp, hooksDir, staged) {
     });
   }
   for (const { rel, st } of hashable) {
-    const src = path.join(repoDir, rel);
     const indexMode = sourceIndexMode(repoDir, rel);
     let mode = (st.mode & 0o111) ? '100755' : '100644';
     if (indexMode === '120000' && materializedSymlinks) mode = '120000';
@@ -433,7 +445,8 @@ function stageDirtyPaths(repoDir, tmp, hooksDir, staged) {
         GIT_OBJECT_DIRECTORY: path.join(tmp, '.git', 'objects'),
         GIT_OPTIONAL_LOCKS: '0',
       },
-      input: fs.readFileSync(src),
+      // Hash the captured copy, not `src`: the worktree can change between placePath and here.
+      input: fs.readFileSync(path.join(tmp, rel)),
     });
     isolatedGit(tmp, hooksDir, ['update-index', '--add', '--replace', '--cacheinfo', `${mode},${sha},${rel}`]);
   }

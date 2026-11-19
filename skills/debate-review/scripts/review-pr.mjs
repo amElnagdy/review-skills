@@ -18,9 +18,10 @@ import { fileURLToPath } from 'node:url';
 
 import { run, text, log } from './lib/shell.mjs';
 import { snapshotWorkingTree } from './lib/local.mjs';
+import { presentAgentConfig, sanitizeAgentConfig } from './lib/agent-config.mjs';
 import { parseTarget, parseOrigin, projectPath, cloneUrl, gitAuth, fetchPR, alreadyReviewed, fetchSpec, postReview } from './lib/forge.mjs';
 import { diffLineMap, anchor } from './lib/diff.mjs';
-import { resolveRole, dispatch, extractJson } from './lib/dispatch.mjs';
+import { resolveRole, dispatch, extractJson, expectSchema } from './lib/dispatch.mjs';
 import { validateFindings, validateDebate, validateFinal } from './lib/validate.mjs';
 import { renderInline, renderBody } from './lib/render.mjs';
 
@@ -31,6 +32,7 @@ const HELP = `debate-review · review-pr.mjs
 Usage:
   node review-pr.mjs --local [--base <ref>] [--repo-dir <dir>] [options]
   node review-pr.mjs <pr-url | number> [--dry-run] [options]
+  node review-pr.mjs --check [--main <implementer>] [--debate <implementer>] [--timeout <dur>]
 
 Targets:
   GitHub        https://github.com/<owner>/<repo>/pull/<n>
@@ -40,6 +42,7 @@ Targets:
 
 Options:
   --local                   Review the working tree. No GitHub/GitLab. Prints the review.
+  --check                   Start each reviewer on a one-line read-only brief and report ok or FAIL.
   --main <implementer>      Main reviewer (claude|codex|cursor|grok|opencode|pi…). Default: the lane.
   --debate <implementer>    Debate reviewer. Default: the lane.
   --main-lane <name>        Fleet lane for main (default: review-main).
@@ -52,13 +55,17 @@ Options:
   --base <ref>              Base override (PR: forge base sha; --local: origin/HEAD, else main, else master).
   --repo-dir <dir>          Local clone (PR) or the working tree to snapshot (--local). Default: cwd.
   --out-dir <dir>           Artifacts (default: ~/.cache/debate-review/… ).
-  --timeout <dur>           Per-implementer relay watchdog (default: 30m).
+  --timeout <dur>           Per-implementer relay watchdog (default: 30m; 5m with --check).
   --dry-run                 Print a live PR review instead of posting. Does not combine with --local.
   --force                   Post even if this head sha already has a debate-review.
   --keep                    Keep the temporary worktree (PR) or snapshot clone (--local).
   --help
 
-Exit codes: 0 posted/printed · 1 failure · 2 usage · 3 head already reviewed (use --force)
+Project agent config (.claude, .codex, .cursor, .mcp.json, …) is stripped from the
+disposable checkout after the diff is computed. --local sanitizes the snapshot, not
+your working tree. --check warns if those paths are in the real cwd and does not delete.
+
+Exit codes: 0 posted/printed/check ok · 1 failure · 2 usage · 3 head already reviewed (use --force)
 `;
 
 // ============================================================ args
@@ -69,7 +76,6 @@ function parseArgs(argv) {
     debateLane: 'review-debate',
     contested: 'post',
     minConfidence: 0.5,
-    timeout: '30m',
   };
   const positional = [];
 
@@ -94,12 +100,18 @@ function parseArgs(argv) {
     else if (arg === '--timeout') opts.timeout = value();
     else if (arg === '--dry-run') opts.dryRun = true;
     else if (arg === '--local') opts.local = true;
+    else if (arg === '--check') opts.check = true;
     else if (arg === '--force') opts.force = true;
     else if (arg === '--keep') opts.keep = true;
     else if (arg.startsWith('--')) fail(2, `unknown option ${arg}`);
     else positional.push(arg);
   }
 
+  opts.timeout ??= opts.check ? '5m' : '30m';
+  if (opts.check) {
+    if (opts.local || opts.dryRun || positional.length !== 0) fail(2, '--check takes no PR URL, --local, or --dry-run');
+    return opts;
+  }
   if (opts.local && opts.dryRun) {
     fail(2, '--local and --dry-run do not combine; --local prints a working tree, --dry-run prints a live PR');
   }
@@ -176,13 +188,19 @@ function findClone(target, opts, auth) {
 }
 
 /** Fetch the PR head + base and check the head out in a throwaway worktree. */
-function makeWorktree(clone, pr, baseBranch, auth) {
+export function makeWorktree(clone, pr, baseBranch, auth) {
   fetchHead(clone, pr, auth);
   run('git', [...auth.args, '-C', clone, 'fetch', '--quiet', 'origin', baseBranch], { env: auth.env });
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-'));
   fs.rmSync(dir, { recursive: true, force: true }); // git wants to create it
-  run('git', ['-C', clone, 'worktree', 'add', '--detach', '--quiet', dir, pr.head]);
+  const noHooks = fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-nohooks-'));
+  try {
+    run('git', ['-C', clone, '-c', `core.hooksPath=${noHooks}`, '-c', 'core.fsmonitor=false',
+      'worktree', 'add', '--detach', '--quiet', dir, pr.head]);
+  } finally {
+    fs.rmSync(noHooks, { recursive: true, force: true });
+  }
   return dir;
 }
 
@@ -258,10 +276,54 @@ function savedAzurePost(outDir, target, pr) {
   return saved;
 }
 
+// ============================================================ setup check
+
+const CHECK_BRIEF = 'This is a setup check. Read no files and change nothing. Reply with only this block:\n\n'
+  + '```json\n{"schema": "debate-review/check", "ok": true}\n```\n';
+
+/**
+ * Start each reviewer the way a review would, on a one-line brief, so a reviewer that is not
+ * installed, not signed in, out of quota, or refused by its sandbox shows before a PR waits on it.
+ * Prints one line per role on stdout; exits 1 when any role fails.
+ */
+function check(opts) {
+  const cwd = opts.repoDir ? path.resolve(opts.repoDir) : process.cwd();
+  const found = presentAgentConfig(cwd);
+  if (found.length) {
+    log(`WARNING --check runs in the real tree and does not delete project agent config (${found.join(', ')}); hooks or MCP servers there still load`);
+  }
+  const outDir = opts.outDir || fs.mkdtempSync(path.join(os.tmpdir(), 'debate-review-check-'));
+  const lanes = { main: opts.mainLane, debate: opts.debateLane };
+  const explicit = { main: opts.main, debate: opts.debate };
+  const results = ['main', 'debate'].map(role => {
+    let who = null;
+    try {
+      who = resolveRole(role, { explicit: explicit[role], lane: lanes[role], cwd });
+      const { text: answer, seconds } = dispatch({ role, who, brief: CHECK_BRIEF, cwd, outDir, timeout: opts.timeout });
+      expectSchema(extractJson(answer), 'debate-review/check', role);
+      return { role, who, ok: true, detail: `${seconds}s` };
+    } catch (error) {
+      return { role, who, ok: false, detail: error.message.split('\n')[0] };
+    }
+  });
+
+  for (const { role, who, ok, detail } of results) {
+    const name = who ? `${who.implementer}${who.lane ? ` (lane ${who.lane})` : ''}` : `lane ${lanes[role]}`;
+    process.stdout.write(`${role.padEnd(7)} ${name.padEnd(34)} ${ok ? `ok in ${detail}` : `FAIL: ${detail}`}\n`);
+  }
+  const [main, debate] = results.map(r => r.who && r.who.implementer);
+  if (main && main === debate) {
+    process.stdout.write(`warning: main and debate are both ${main}; the debate is worth more with two different implementers\n`);
+  }
+  process.stdout.write(`artifacts in ${outDir}\n`);
+  process.exit(results.every(r => r.ok) ? 0 : 1);
+}
+
 // ============================================================ flow
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.check) return check(opts);
 
   let target = null;
   let pr;
@@ -357,6 +419,8 @@ async function main() {
     if (!diff.trim()) throw new Error('empty diff, nothing to review');
     const commits = text('git', ['-C', worktree, 'log', `${baseRef}..HEAD`, '--oneline']);
     const lineMap = diffLineMap(diff);
+    // Disposable checkout only (PR worktree or --local snapshot). Never the user's real tree.
+    sanitizeAgentConfig(worktree, { protect: repoDirForRoles });
 
     const who = {
       main: resolveRole('main', { explicit: opts.main, lane: opts.mainLane, cwd: repoDirForRoles }),
@@ -474,7 +538,10 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  process.stderr.write(`review-pr: ${error.message}\n`);
-  process.exit(1);
-});
+const invokedAsCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedAsCli) {
+  main().catch(error => {
+    process.stderr.write(`review-pr: ${error.message}\n`);
+    process.exit(1);
+  });
+}
