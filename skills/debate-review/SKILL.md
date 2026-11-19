@@ -40,6 +40,11 @@ node "<skill-dir>/scripts/review-pr.mjs" <pr-url | number> [--dry-run]
   `--main <implementer>` or `--debate <implementer>`. Only implementers whose relay has `--read-only`
   are accepted. These two lanes belong to the reviewer. Don't point them at a lane you use for other
   work, such as a plan-debate lane.
+- `--spec <path|->` feeds the Spec axis when the spec is not a linked forge issue. The script only
+  discovers specs from `#N` issue references in the PR title, body, and commits, and under `--local`
+  it discovers none at all, so a repo whose requirements live in Jira, Confluence, or a plan doc gets
+  the Spec axis silently skipped. Write the requirements to a file and pass it. Pairs with `--local`,
+  where the reviewers otherwise have nothing to check the diff against.
 - `--check` starts each reviewer on a one-line read-only brief and prints `ok` or `FAIL` with the reason per role, exit `1` on any failure. Run it once on every machine after setting up the lanes, in a trusted repo, not an untrusted PR checkout; it catches a reviewer that is not installed, not signed in, out of quota, or refused by its sandbox before a PR waits on it. `--check` runs in the real cwd (or `--repo-dir`) and does not delete files; it warns if project agent config is present.
 - After the diff is computed, project agent config is removed from the disposable checkout (`.claude`, `.codex`, `.cursor`, `.opencode`, `opencode.json`/`opencode.jsonc`, `.mcp.json`, and similar) so a PR cannot run hooks or MCP servers on the reviewer machine. Reviewers still see those paths in the commit diff. `--local` sanitizes the snapshot clone only, never the user's working tree.
 - Exit code `3` means this head sha already has a debate-review. Re-run with `--force` to post again.
