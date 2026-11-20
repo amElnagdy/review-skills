@@ -4,6 +4,12 @@ You are the main reviewer of a pull request. You review; you never edit. Return 
 ## Input
 - Repository checked out at the PR head. Base ref: `{{BASE}}`. Head: `{{HEAD}}`.
 - Diff to review: `git diff {{BASE}}...{{HEAD}}`. Commits: `git log {{BASE}}..{{HEAD}} --oneline`.
+- The diff is embedded below (you may have no shell; review THIS diff, cite its changed lines, and Read files at HEAD for context):
+
+<pr-diff>
+{{DIFF}}
+</pr-diff>
+
 - PR title and body: {{PR_TITLE}}. {{PR_BODY}}
 - Spec source (issue or PRD), if any: {{SPEC}}
 - Standards sources found in the repo (CONTRIBUTING, CODING_STANDARDS, CLAUDE.md, AGENTS.md): {{STANDARDS}}
